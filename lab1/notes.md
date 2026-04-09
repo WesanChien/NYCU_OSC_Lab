@@ -12,10 +12,6 @@ Stack Pointer 一定要先設定，因為只要一進入 C 函式，Compiler 通
 # UART Setup
 RISC-V 用 Memory Mapped I/O
 
-# Simple Shell
-
-# System Information
-
 # 硬體差異
 在 QEMU 模擬是 8-bit UART register，每個位址就是一個 byte register。
 OrangePi 是 32-bit memory-mapped register，register 本身是用 word access
