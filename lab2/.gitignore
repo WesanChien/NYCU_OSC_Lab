@@ -1,0 +1,7 @@
+*.elf
+*.o
+kernel
+*.bin
+*.fit
+*.elf
+x1_orangepi-rv2.dtb
