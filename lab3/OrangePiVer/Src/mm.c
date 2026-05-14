@@ -32,7 +32,24 @@ struct page { // 每個 page 的 metadata
     struct page *next;
 };
 
-static struct page frame_array[MAX_FRAME_COUNT];
+//static struct page frame_array[MAX_FRAME_COUNT]; // 用 static array 存 page metadata, 這樣就不需要 dynamic allocation 就能管理 memory
+
+static struct page *frame_array = 0;
+
+#define MAX_EARLY_RESERVED 16
+
+struct early_reserved_region {
+    unsigned long start;
+    unsigned long end;
+    const char *name;
+};
+
+static struct early_reserved_region early_reserved[MAX_EARLY_RESERVED];
+static int early_reserved_count = 0;
+
+static unsigned long startup_ptr = 0;
+static unsigned long startup_end = 0;
+
 /*
  * free_area[order] 是 linked list head。
  *
@@ -117,6 +134,33 @@ static unsigned long align_down(unsigned long val, unsigned long align) {
     return val & ~(align - 1);
 }
 
+static void early_reserve_add(unsigned long start, unsigned long size, const char *name) {
+    if (size == 0)
+        return;
+
+    if (early_reserved_count >= MAX_EARLY_RESERVED) {
+        uart_puts("[EarlyReserve] Too many reserved regions\n");
+        while (1) { }
+    }
+
+    unsigned long end = start + size;
+
+    start = align_down(start, PAGE_SIZE);
+    end = align_up(end, PAGE_SIZE);
+
+    early_reserved[early_reserved_count].start = start;
+    early_reserved[early_reserved_count].end = end;
+    early_reserved[early_reserved_count].name = name;
+    early_reserved_count++;
+
+    uart_puts("[EarlyReserve] ");
+    uart_puts(name);
+    uart_puts(" [");
+    uart_hex(start);
+    uart_puts(", ");
+    uart_hex(end);
+    uart_puts(")\n");
+}
 /* ---------- circular doubly linked list ---------- */
 
 static void list_init(struct page *head) {
@@ -207,7 +251,7 @@ static void remove_free_block(struct page *page) {
     log_remove_block(idx, order);
 }
 
-/* ---------- Basic Exercise 1: Buddy System ---------- */
+/* ---------- Buddy System ---------- */
 
 void *alloc_pages(unsigned int order) {
     if (order > MAX_ORDER)
@@ -485,6 +529,80 @@ void free(void *ptr) {
     free_pages(ptr);
 }
 
+/* ---------- Startup Allocator ---------- */
+/*
+ * Startup allocator for allocating memory during early boot stage.(no free needed)
+ * 從 startup_ptr 開始往上找
+ * 如果碰到 reserved region，就跳過
+ * 找到一段夠大的空間後回傳
+ */
+
+static void startup_allocator_init(unsigned long start, unsigned long end) {
+    startup_ptr = align_up(start, PAGE_SIZE);
+    startup_end = align_down(end, PAGE_SIZE);
+
+    uart_puts("[StartupAlloc] range [");
+    uart_hex(startup_ptr);
+    uart_puts(", ");
+    uart_hex(startup_end);
+    uart_puts(")\n");
+}
+
+static int range_overlap(unsigned long a_start,
+                         unsigned long a_end,
+                         unsigned long b_start,
+                         unsigned long b_end) {
+    return a_start < b_end && b_start < a_end;
+}
+
+/*
+ 1. 從 startup_ptr 開始找
+ 2. 把 addr 對齊到指定 align
+ 3. 計算候選區域 [addr, addr + size)
+ 4. 檢查是否碰到任何 early reserved region
+ 5. 如果碰到，就跳到該 reserved region 的結尾後面，重新找
+ 6. 如果沒有碰到，就回傳 addr
+ 7. 更新 startup_ptr
+ */
+static void *startup_alloc(unsigned long size, unsigned long align) {
+    unsigned long addr = align_up(startup_ptr, align);
+    unsigned long end;
+
+    size = align_up(size, PAGE_SIZE);
+
+    while (addr + size <= startup_end) {
+        int conflict = 0;
+
+        end = addr + size;
+
+        for (int i = 0; i < early_reserved_count; i++) {
+            unsigned long r_start = early_reserved[i].start;
+            unsigned long r_end = early_reserved[i].end;
+
+            if (range_overlap(addr, end, r_start, r_end)) {
+                addr = align_up(r_end, align);
+                conflict = 1;
+                break;
+            }
+        }
+
+        if (!conflict) {
+            startup_ptr = end;
+
+            uart_puts("[StartupAlloc] allocate [");
+            uart_hex(addr);
+            uart_puts(", ");
+            uart_hex(end);
+            uart_puts(")\n");
+
+            return (void *)addr;
+        }
+    }
+
+    uart_puts("[StartupAlloc] out of memory\n");
+    return 0;
+}
+
 /* ---------- init / debug / test ---------- */
 
 void mm_dump(void) {
@@ -517,6 +635,8 @@ void mm_dump(void) {
         uart_puts("\n");
     }
 }
+
+/* ---------- EX1 Hardcoded Memory Initialization ---------- */
 
 // void mm_init(void) { // 把 hardcoded memory range 初始化成 Buddy System 可管理的狀態
 //     if (mm_initialized)
@@ -568,41 +688,173 @@ void mm_dump(void) {
 //     uart_puts("[MM] Memory allocator initialized\n");
 // }
 
+/* ---------- EX2 DTB-based Memory Initialization ---------- */
+
+/* 讀 memory region
+ * 初始化 static frame_array
+ * 建立 buddy
+ * reserve kernel / DTB / initramfs
+ */
+// void mm_init(const void *fdt, unsigned long initrd_start, unsigned long initrd_end) {
+//     if (mm_initialized)
+//         return;
+
+//     uart_puts("[MM] Initializing memory allocator\n");
+
+//     unsigned long dtb_mem_base = 0;
+//     unsigned long dtb_mem_size = 0;
+
+//     if (!dtb_get_memory_region(fdt, &dtb_mem_base, &dtb_mem_size)) { // 讀取 DTB memory region
+//         uart_puts("[MM] Failed to get /memory region from DTB\n");
+//         while (1) { }
+//     }
+    
+//     managed_base = align_up(dtb_mem_base, PAGE_SIZE); // 對齊 page boundary, buddy system 是用 page 當單位
+//     managed_size = dtb_mem_size - (managed_base - dtb_mem_base);
+//     managed_size = align_down(managed_size, PAGE_SIZE);
+//     /*
+//      * 使用 DTB /memory node 的第一段 memory region
+//      *
+//      * 目前 frame_array 還是 static array，
+//      * 所以最多先支援 MAX_MANAGED_MEMORY_SIZE。
+//      */
+//     if (managed_size > MAX_MANAGED_MEMORY_SIZE)
+//         managed_size = MAX_MANAGED_MEMORY_SIZE;
+
+//     frame_count = managed_size / PAGE_SIZE;
+
+//     uart_puts("[MM] DTB memory base: ");
+//     uart_hex(dtb_mem_base);
+//     uart_puts("\n");
+
+//     uart_puts("[MM] DTB memory size: ");
+//     uart_hex(dtb_mem_size);
+//     uart_puts("\n");
+
+//     uart_puts("[MM] Managed base: ");
+//     uart_hex(managed_base);
+//     uart_puts("\n");
+
+//     uart_puts("[MM] Managed size: ");
+//     uart_hex(managed_size);
+//     uart_puts("\n");
+
+//     uart_puts("[MM] Frame count: ");
+//     print_dec(frame_count);
+//     uart_puts("\n");
+
+//     if (frame_count == 0 || frame_count > MAX_FRAME_COUNT) {
+//         uart_puts("[MM] Invalid frame count\n");
+//         while (1) { }
+//     }
+
+//     for (int i = 0; i <= MAX_ORDER; i++)
+//         list_init(&free_area[i]);
+
+//     for (unsigned long i = 0; i < frame_count; i++) {
+//         frame_array[i].order = -1;
+//         frame_array[i].state = FRAME_USED;
+//         frame_array[i].in_free_list = 0;
+//         frame_array[i].chunk_size = 0;
+//         frame_array[i].chunk_pool = -1;
+//         frame_array[i].next = NULL;
+//         frame_array[i].prev = NULL;
+//     }
+
+//     for (int i = 0; i < NUM_POOLS; i++)
+//         chunk_free_list[i] = NULL;
+
+//     /*
+//      * 先把整段 managed memory 放進 buddy system。
+//      * 後面再 reserve 已經被使用的區域。
+//      */
+//     unsigned long idx = 0;
+
+//     while (idx < frame_count) {
+//         int selected_order = 0;
+
+//         for (int order = MAX_ORDER; order >= 0; order--) { // 從第 0 個 page 開始, 盡量用最大的 order block 填滿整段 managed memory
+//             unsigned long block_pages = 1UL << order;
+
+//             if ((idx % block_pages) == 0 &&
+//                 idx + block_pages <= frame_count) {
+//                 selected_order = order;
+//                 break;
+//             }
+//         }
+
+//         add_free_block(idx, selected_order);
+//         idx += 1UL << selected_order;
+//     }
+
+//     /*
+//      * Reserve 1: DTB itself
+//      *
+//      * DTB 是 bootloader 傳給 kernel 的硬體描述資料
+//      *
+//      * fdt 是 DTB 起始位址。
+//      * fdt_totalsize(fdt) 是 DTB blob 總長度。
+//      */
+//     unsigned long dtb_start = (unsigned long)fdt;
+//     unsigned long dtb_size = fdt_totalsize(fdt);
+
+//     memory_reserve(dtb_start, dtb_size);
+
+//     /*
+//      * Reserve 2: Kernel image
+//      *
+//      * 這兩個 symbol 要在 linker script 裡定義。
+//      * 建議 reserve 到 __kernel_end，
+//      * 包含 .text/.rodata/.data/.bss，以及 static frame_array。
+//      */
+//     unsigned long kernel_start = (unsigned long)__kernel_start;
+//     unsigned long kernel_end = (unsigned long)__kernel_end;
+
+//     if (kernel_end > kernel_start)
+//         memory_reserve(kernel_start, kernel_end - kernel_start);
+
+//     /*
+//      * Reserve 3: Initramfs
+//      *
+//      * Lab2 已經從 /chosen 讀出 linux,initrd-start/end。
+//      */
+//     if (initrd_start && initrd_end && initrd_end > initrd_start)
+//         memory_reserve(initrd_start, initrd_end - initrd_start);
+
+//     mm_initialized = 1;
+
+//     uart_puts("[MM] Memory allocator initialized\n");
+// }
+
+/* ---------- EX3 Startup Allocator Memory Initialization ---------- */
+
+/* 讀 memory region
+ * 先記錄 reserved regions
+ * startup_alloc 配置 frame_array
+ * 把 frame_array 也記錄成 reserved
+ * 初始化 frame_array
+ * 建立 buddy
+ * 對所有 early_reserved 呼叫 memory_reserve()
+ */
 void mm_init(const void *fdt, unsigned long initrd_start, unsigned long initrd_end) {
     if (mm_initialized)
         return;
 
-    uart_puts("[MM] Initializing memory allocator\n");
+    uart_puts("[MM] Initializing memory allocator with startup allocator\n");
 
     unsigned long dtb_mem_base = 0;
     unsigned long dtb_mem_size = 0;
 
-    if (!dtb_get_memory_region(fdt, &dtb_mem_base, &dtb_mem_size)) { // 讀取 DTB memory region
+    if (!dtb_get_memory_region(fdt, &dtb_mem_base, &dtb_mem_size)) {
         uart_puts("[MM] Failed to get /memory region from DTB\n");
         while (1) { }
     }
-    
-    managed_base = align_up(dtb_mem_base, PAGE_SIZE); // 對齊 page boundary, buddy system 是用 page 當單位
+
+    managed_base = align_up(dtb_mem_base, PAGE_SIZE);
     managed_size = dtb_mem_size - (managed_base - dtb_mem_base);
     managed_size = align_down(managed_size, PAGE_SIZE);
-    /*
-     * 使用 DTB /memory node 的第一段 memory region
-     *
-     * 目前 frame_array 還是 static array，
-     * 所以最多先支援 MAX_MANAGED_MEMORY_SIZE。
-     */
-    if (managed_size > MAX_MANAGED_MEMORY_SIZE)
-        managed_size = MAX_MANAGED_MEMORY_SIZE;
 
     frame_count = managed_size / PAGE_SIZE;
-
-    uart_puts("[MM] DTB memory base: ");
-    uart_hex(dtb_mem_base);
-    uart_puts("\n");
-
-    uart_puts("[MM] DTB memory size: ");
-    uart_hex(dtb_mem_size);
-    uart_puts("\n");
 
     uart_puts("[MM] Managed base: ");
     uart_hex(managed_base);
@@ -616,41 +868,88 @@ void mm_init(const void *fdt, unsigned long initrd_start, unsigned long initrd_e
     print_dec(frame_count);
     uart_puts("\n");
 
-    if (frame_count == 0 || frame_count > MAX_FRAME_COUNT) {
-        uart_puts("[MM] Invalid frame count\n");
+    /*
+     * Step 1:
+     * 先記錄開機時已經被佔用的區域。
+     * 注意：這裡還不能呼叫 memory_reserve()。
+     */
+    unsigned long dtb_start = (unsigned long)fdt;
+    unsigned long dtb_size = fdt_totalsize(fdt);
+
+    early_reserve_add(dtb_start, dtb_size, "DTB");
+
+    unsigned long kernel_start = (unsigned long)__kernel_start;
+    unsigned long kernel_end = (unsigned long)__kernel_end;
+
+    if (kernel_end > kernel_start)
+        early_reserve_add(kernel_start, kernel_end - kernel_start, "Kernel");
+
+    if (initrd_start && initrd_end && initrd_end > initrd_start)
+        early_reserve_add(initrd_start, initrd_end - initrd_start, "Initramfs");
+
+    /*
+     * Step 2:
+     * 初始化 startup allocator。
+     */
+    startup_allocator_init(managed_base, managed_base + managed_size);
+
+    /*
+     * Step 3:
+     * 用 startup allocator 配置 frame_array。
+     */
+    unsigned long frame_array_size = frame_count * sizeof(struct page);
+
+    frame_array = (struct page *)startup_alloc(frame_array_size, PAGE_SIZE);
+
+    if (!frame_array) {
+        uart_puts("[MM] Failed to allocate frame_array\n");
         while (1) { }
     }
 
+    /*
+     * Step 4:
+     * frame_array 本身也是已使用 memory。
+     * 所以也要加入 early reserved table。
+     */
+    early_reserve_add((unsigned long)frame_array, frame_array_size, "FrameArray");
+
+    /*
+     * Step 5:
+     * 初始化 free_area。
+     */
     for (int i = 0; i <= MAX_ORDER; i++)
         list_init(&free_area[i]);
 
+    /*
+     * Step 6:
+     * 初始化 frame_array metadata。
+     */
     for (unsigned long i = 0; i < frame_count; i++) {
         frame_array[i].order = -1;
         frame_array[i].state = FRAME_USED;
         frame_array[i].in_free_list = 0;
         frame_array[i].chunk_size = 0;
         frame_array[i].chunk_pool = -1;
-        frame_array[i].next = NULL;
-        frame_array[i].prev = NULL;
+        frame_array[i].next = 0;
+        frame_array[i].prev = 0;
     }
 
     for (int i = 0; i < NUM_POOLS; i++)
-        chunk_free_list[i] = NULL;
+        chunk_free_list[i] = 0;
 
     /*
-     * 先把整段 managed memory 放進 buddy system。
-     * 後面再 reserve 已經被使用的區域。
+     * Step 7:
+     * 先把整段 managed memory 加進 Buddy System。
      */
     unsigned long idx = 0;
 
     while (idx < frame_count) {
         int selected_order = 0;
 
-        for (int order = MAX_ORDER; order >= 0; order--) { // 從第 0 個 page 開始, 盡量用最大的 order block 填滿整段 managed memory
+        for (int order = MAX_ORDER; order >= 0; order--) {
             unsigned long block_pages = 1UL << order;
 
-            if ((idx % block_pages) == 0 &&
-                idx + block_pages <= frame_count) {
+            if ((idx % block_pages) == 0 && idx + block_pages <= frame_count) {
                 selected_order = order;
                 break;
             }
@@ -661,38 +960,15 @@ void mm_init(const void *fdt, unsigned long initrd_start, unsigned long initrd_e
     }
 
     /*
-     * Reserve 1: DTB itself
+     * Step 8:
+     * Buddy System 建好後，
+     * 對所有 early reserved regions 呼叫 memory_reserve()。
      *
-     * DTB 是 bootloader 傳給 kernel 的硬體描述資料
-     *
-     * fdt 是 DTB 起始位址。
-     * fdt_totalsize(fdt) 是 DTB blob 總長度。
+     * 這一步才是真正把它們從 free_area 裡移除。
      */
-    unsigned long dtb_start = (unsigned long)fdt;
-    unsigned long dtb_size = fdt_totalsize(fdt);
-
-    memory_reserve(dtb_start, dtb_size);
-
-    /*
-     * Reserve 2: Kernel image
-     *
-     * 這兩個 symbol 要在 linker script 裡定義。
-     * 建議 reserve 到 __kernel_end，
-     * 包含 .text/.rodata/.data/.bss，以及 static frame_array。
-     */
-    unsigned long kernel_start = (unsigned long)__kernel_start;
-    unsigned long kernel_end = (unsigned long)__kernel_end;
-
-    if (kernel_end > kernel_start)
-        memory_reserve(kernel_start, kernel_end - kernel_start);
-
-    /*
-     * Reserve 3: Initramfs
-     *
-     * Lab2 已經從 /chosen 讀出 linux,initrd-start/end。
-     */
-    if (initrd_start && initrd_end && initrd_end > initrd_start)
-        memory_reserve(initrd_start, initrd_end - initrd_start);
+    for (int i = 0; i < early_reserved_count; i++) {
+        memory_reserve(early_reserved[i].start, early_reserved[i].end - early_reserved[i].start);
+    }
 
     mm_initialized = 1;
 
