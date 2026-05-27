@@ -5,6 +5,7 @@
 核心欄位：
 SIE (Supervisor Interrupt Enable)：控制 S-mode 當前是否允許中斷。
 SPIE (Supervisor Previous Interrupt Enable)：儲存進入 Trap 前的 SIE 狀態。
+STIE (Supervisor Timer Interrupt Enable)
 SPP (Supervisor Previous Privilege)：紀錄進入 Trap 前的特權模式（0 表 U-mode，1 表 S-mode）。
 
 2. stvec (Supervisor Trap Vector Base Address Register)
@@ -55,3 +56,11 @@ Exception Code (其餘位元)：對應規格書的編碼表（例如：編碼 9 
 5. kernel 把同一個 IRQ number 寫回 PLIC_CLAIM
 6. PLIC gateway 解鎖，之後同一個 device 才能再送 interrupt
 
+# Basic EX1
+trap 發生時，CPU 只會幫你切到 S-mode 並跳到 stvec (run Trap Handler)
+CPU 不會自動幫你保存所有 register, so you have to do it in start.S by yourself(handle_exception)
+
+# Basic EX2
+sbi_set_timer(next_time)
+不是設定「2 秒後」這種 relative delay，而是設定：
+當 time CSR 到達 next_time 時，產生 timer interrupt
