@@ -57,10 +57,61 @@ Exception Code (其餘位元)：對應規格書的編碼表（例如：編碼 9 
 6. PLIC gateway 解鎖，之後同一個 device 才能再送 interrupt
 
 # Basic EX1
+user program 主動 ecall
+
 trap 發生時，CPU 只會幫你切到 S-mode 並跳到 stvec (run Trap Handler)
 CPU 不會自動幫你保存所有 register, so you have to do it in start.S by yourself(handle_exception)
 
 # Basic EX2
+硬體 timer 到時間後會自動讓 CPU 進入 trap handler
+
 sbi_set_timer(next_time)
 不是設定「2 秒後」這種 relative delay，而是設定：
 當 time CSR 到達 next_time 時，產生 timer interrupt
+
+# Basic EX3
+UART 收到字元
+  -> UART hardware 產生 interrupt
+  -> PLIC 收到 UART IRQ
+  -> CPU trap，scause = external interrupt
+  -> kernel 讀 PLIC claim
+  -> 發現 IRQ = UART0_IRQ_ID
+  -> uart_handle_irq()
+      -> RX：把 UART RBR 的字元搬到 rx ring buffer
+      -> TX：如果 UART 可送，就從 tx ring buffer 搬字元到 THR
+  -> PLIC complete
+  -> 回到原本程式
+
+UART interrupt 是外部裝置，所以中間會多一個 PLIC, 負責管理「外部裝置 interrupt」，例如：UART, GPIO, SPI, I2C, 
+對 CPU 來說，外部 interrupt 只會看到：scause = 0x8000000000000009 (a.k.a. Supervisor External Interrupt)
+但 CPU 不知道是哪個裝置造成的，所以要問 PLIC：irq = plic_claim(); (e.g. IRQ 42), 
+然後 kernel 才知道是 UART0 (IRQ 42)
+
+流程是：
+CPU 收到 external interrupt
+  -> plic_claim()
+  -> 回傳 42
+  -> 代表 UART0 interrupt
+  -> uart_handle_irq()
+  -> plic_complete(42)
+
+*(volatile unsigned int *) 0xE0000000 是 PLIC 的某個 register(MMIO)
+
+假設你按下鍵盤 h, 完整流程:
+1. UART hardware 收到 'h'
+2. UART 設定內部狀態：LSR_DR = 1, 代表 Receive Buffer 有資料
+3. UART 因為 RX interrupt enable，所以送出 interrupt signal
+4. PLIC 收到 UART0 IRQ 42
+5. CPU trap
+6. scause = external interrupt
+7. trap.c 呼叫 plic_claim()
+8. plic_claim() 回傳 42
+9. trap.c 呼叫 uart_handle_irq()
+10. uart_handle_irq() 從 RBR 讀 'h'
+11. 存進 rx_buf[rx_w]
+12. plic_complete(42)
+13. 回到 shell
+14. shell 的 uart_getc() 從 rx_buf 取出 'h'
+
+plic.c 只負責一件事：設定 PLIC，並提供 claim / complete 介面。
+只負責 interrupt routing。

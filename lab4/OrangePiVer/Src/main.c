@@ -6,6 +6,7 @@
 #include "trap.h"
 #include "timer.h"
 #include "sbi.h"
+#include "plic.h"
 
 void start_kernel(unsigned long fdt_addr) {
     const void *fdt = (const void *)fdt_addr;
@@ -34,12 +35,17 @@ void start_kernel(unsigned long fdt_addr) {
 
     mm_init(fdt, (unsigned long)rd_start, (unsigned long)rd_end);
 
-    uart_puts("\nStarting OSC loaded Lab4 Ex2 kernel ...\n");
+    uart_puts("\nStarting OSC loaded Lab4 Ex3 kernel ...\n");
 
     uart_puts("Type 'help' for commands.\n");
 
-    trap_init();
+    trap_init(); // 設 stvec, 不然 interrupt 來了不知道跳哪裡
 
-    timer_init();
+    timer_init(); // 開 timer interrupt
+    
+    plic_init(0); // 設 PLIC (UART0 IRQ priority / enable / threshold)
+    uart_enable_interrupt(); // 開 UART RX interrupt
+    enable_external_interrupt(); // 開 sie.SEIE / sstatus.SIE, 允許 external interrupt 進 CPU
+    
     shell_run(fdt_addr);
 }

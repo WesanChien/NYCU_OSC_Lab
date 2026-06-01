@@ -8,4 +8,7 @@ void uart_hex(unsigned long h);
 void uart_init(unsigned long base);
 void uart_dec(unsigned long x);
 
+void uart_enable_interrupt(void);
+void uart_handle_irq(void);
+
 #endif
