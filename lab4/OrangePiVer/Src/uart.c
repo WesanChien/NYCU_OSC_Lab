@@ -1,4 +1,5 @@
 #include "uart.h"
+#include "irq.h"
 
 /*
  * OrangePi RV2 UART0.
@@ -86,20 +87,6 @@ static inline unsigned int next_idx(unsigned int idx) { // 只是要循環使用
     return (idx + 1U) % UART_BUF_SIZE;
 }
 
-static inline unsigned long irq_save(void) {
-    unsigned long s;
-    asm volatile("csrr %0, sstatus" : "=r"(s)); // 讀出目前 sstatus 的值到 s 裡
-    asm volatile("csrci sstatus, 2"); // clear sstatus 的 bit 1 (SIE)，關掉 S-mode interrupt
-    return s;
-}
-
-static inline void irq_restore(unsigned long s) {
-    if (s & 2UL)
-        asm volatile("csrsi sstatus, 2"); // sstatus |= 1U << 2, 原本舊狀態開啟就開啟回去
-    else
-        asm volatile("csrci sstatus, 2"); // sstatus &= ~(1U << 2), 原本舊狀態關閉就關閉回去
-}
-
 static void uart_enable_tx_interrupt(void) {
     *uart_ier() |= IER_TX_ENABLE;
 }
@@ -136,7 +123,7 @@ void uart_init(unsigned long base) {
 }
 
 void uart_enable_interrupt(void) {
-    unsigned long s = irq_save();
+    unsigned long s = local_irq_save();
 
     rx_r = rx_w = 0;
     tx_r = tx_w = 0;
@@ -151,7 +138,7 @@ void uart_enable_interrupt(void) {
     *uart_ier() |= IER_RX_ENABLE;
     *uart_ier() &= ~IER_TX_ENABLE;
 
-    irq_restore(s);
+    local_irq_restore(s);
 }
 
 /*
@@ -160,7 +147,7 @@ void uart_enable_interrupt(void) {
  * 這個 function 會在 PLIC claim 到 UART0_IRQ_ID 後被呼叫。
  */
 void uart_handle_irq(void) {
-    unsigned long s = irq_save();
+    unsigned long s = local_irq_save();
 
     /*
      * RX：只要 hardware 有資料，就全部搬到 rx ring buffer。
@@ -179,7 +166,7 @@ void uart_handle_irq(void) {
 
     uart_tx_kick_locked(); // TX：如果 UART transmitter ready，就把 tx ring buffer 的資料送出去
 
-    irq_restore(s);
+    local_irq_restore(s);
 }
 
 char uart_getc(void) {
@@ -191,16 +178,16 @@ char uart_getc(void) {
     }
 
     while (1) {
-        unsigned long s = irq_save(); // 關掉 interrupt，確保接下來讀 rx ring buffer 的時候不會被 ISR 打斷
+        unsigned long s = local_irq_save(); // 關掉 interrupt，確保接下來讀 rx ring buffer 的時候不會被 ISR 打斷
 
         if (rx_r != rx_w) {
             char c = rx_buf[rx_r];
             rx_r = next_idx(rx_r);
-            irq_restore(s); // 讀 rx ring buffer 完了再開 interrupt，確保不會漏掉剛剛讀的這個字元之後的 interrupt
+            local_irq_restore(s); // 讀 rx ring buffer 完了再開 interrupt，確保不會漏掉剛剛讀的這個字元之後的 interrupt
             return c == '\r' ? '\n' : c;
         }
 
-        irq_restore(s); // rx ring buffer 裡沒有資料了，先開 interrupt 等 ISR 把資料放進來
+        local_irq_restore(s); // rx ring buffer 裡沒有資料了，先開 interrupt 等 ISR 把資料放進來
 
         /*
          * 保險：如果 interrupt 還沒進來但 LSR 已經有資料，
@@ -219,16 +206,16 @@ char uart_getc_raw(void) {
     }
 
     while (1) {
-        unsigned long s = irq_save();
+        unsigned long s = local_irq_save();
 
         if (rx_r != rx_w) {
             char c = rx_buf[rx_r];
             rx_r = next_idx(rx_r);
-            irq_restore(s);
+            local_irq_restore(s);
             return c;
         }
 
-        irq_restore(s);
+        local_irq_restore(s);
 
         if ((*uart_lsr() & LSR_DR) != 0)
             uart_handle_irq();
@@ -247,7 +234,7 @@ void uart_putc(char c) {
     }
 
     while (1) {
-        unsigned long s = irq_save();
+        unsigned long s = local_irq_save();
         unsigned int n = next_idx(tx_w);
 
         if (n != tx_r) {
@@ -257,7 +244,7 @@ void uart_putc(char c) {
             uart_enable_tx_interrupt();
             uart_tx_kick_locked();
 
-            irq_restore(s);
+            local_irq_restore(s);
             return;
         }
 
@@ -266,7 +253,7 @@ void uart_putc(char c) {
          * 先嘗試 kick TX，釋放一些空間。
          */
         uart_tx_kick_locked();
-        irq_restore(s);
+        local_irq_restore(s);
     }
 }
 

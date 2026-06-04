@@ -69,6 +69,16 @@ sbi_set_timer(next_time)
 不是設定「2 秒後」這種 relative delay，而是設定：
 當 time CSR 到達 next_time 時，產生 timer interrupt
 
+timer_init()
+  -> sbi_set_timer(now + 2 秒)
+
+timer interrupt
+  -> boot_time += 2
+  -> 印 boot time
+  -> sbi_set_timer(now + 2 秒)
+
+也就是每次 timer interrupt 都固定設定下一次 2 秒後。
+
 # Basic EX3
 UART 收到字元
   -> UART hardware 產生 interrupt
@@ -115,3 +125,17 @@ CPU 收到 external interrupt
 
 plic.c 只負責一件事：設定 PLIC，並提供 claim / complete 介面。
 只負責 interrupt routing。
+
+# Advanced EX1
+硬體上只有一個 timer，但是 kernel 可以同時管理很多個 software timer。
+核心是用一條 software timer queue 管理多個 timeout event，hardware timer 永遠只設定成最早到期的那一個。
+
+queue 裡面每個 node 代表一個 timeout：[3 秒後印 abc] -> [5 秒後印 hello] -> [8 秒後印 done]
+
+timer queue 可能在 shell 輸入 setTimeout時，有 add_timer() 會插入，也可能同時timer queue 內有 event 到期,
+timer_handle_interrupt()，會從 timer queue 移除到期 event, 因此需要 C.S. design
+
+其要求 setTimeout is non-blocking，所以 shell.c 不能寫:
+sleep(sec);
+uart_puts(msg);
+用 add_timer(set_timeout_callback, m, sec); 把 event 插進 queue，然後馬上返回。
