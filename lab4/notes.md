@@ -139,3 +139,19 @@ timer_handle_interrupt()，會從 timer queue 移除到期 event, 因此需要 C
 sleep(sec);
 uart_puts(msg);
 用 add_timer(set_timeout_callback, m, sec); 把 event 插進 queue，然後馬上返回。
+
+# Advanced EX2
+不要在 interrupt handler 裡直接做太多工作，而是把工作包成 tas，放進 task queue,
+等 trap handler 準備返回前再執行。執行 task 時開啟 interrupt，且有 Preemption。
+
+1. Decouple interrupt handler
+   interrupt handler 只負責把工作排進 task queue，不直接做長工作。
+
+2. Nested interrupt
+   task 執行中允許 interrupt 再次進來。
+
+3. Preemption
+   高 priority task 可以打斷低 priority task。
+
+timer_trigger_now() 把下一次 timer 設成現在，讓 timer interrupt 盡快發生, 這是測試 nested interrupt 用的。
+因為 do_trap() 那邊才會有 run_pending_task() 讓 Preempt 進來的 High priority task 優先執行

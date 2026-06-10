@@ -2,6 +2,7 @@
 #include "sbi.h"
 #include "uart.h"
 #include "irq.h"
+#include "task.h"
 
 #define TIMER_FREQ          24000000UL
 #define BOOT_TICK_SEC       2
@@ -227,16 +228,42 @@ void timer_handle_interrupt(void) {
         local_irq_restore(s);
 
         /*
-         * 執行 callback。
-         *
-         * Advanced Exercise 2 才會把 callback 丟到 task queue。
-         * Advanced Exercise 1 先直接在 timer interrupt context 執行。
+         * timer interrupt handler 不直接執行 callback，
+         * 而是把 callback 包成 task。
          */
-        callback(arg);
+        if (callback) {
+            if (add_task((task_callback_t)callback, arg, 1) < 0) {
+                /*
+                 * 如果 task queue 滿了，就 fallback 直接執行，
+                 * 避免 timeout callback 完全遺失。
+                 */
+                callback(arg);
+            }
+        }     
     }
 }
 
 unsigned long timer_get_boot_time(void) {
     unsigned long now = read_time();
     return (now - boot_time_base) / TIMER_FREQ;
+}
+
+void timer_trigger_now(void) {
+    unsigned long s = local_irq_save();
+
+    /*
+     * 把 timer 設成現在，強制很快進一次 timer interrupt
+     * 測試 nested interrupt / preemption。
+     */
+    long err = sbi_set_timer(read_time());
+
+    if (err != 0) {
+        uart_puts("[timer] trigger_now error: ");
+        uart_hex(err);
+        uart_puts("\n");
+    }
+
+    enable_stie();
+
+    local_irq_restore(s);
 }

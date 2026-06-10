@@ -7,6 +7,7 @@
 #include "timer.h"
 #include "sbi.h"
 #include "plic.h"
+#include "task.h"
 
 void start_kernel(unsigned long fdt_addr) {
     const void *fdt = (const void *)fdt_addr;
@@ -35,11 +36,13 @@ void start_kernel(unsigned long fdt_addr) {
 
     mm_init(fdt, (unsigned long)rd_start, (unsigned long)rd_end);
 
-    uart_puts("\nStarting OSC loaded Lab4 Advanced Exercise 1 kernel ...\n");
+    uart_puts("\nStarting OSC loaded Lab4 Advanced Exercise 2 kernel ...\n");
 
     uart_puts("Type 'help' for commands.\n");
 
     trap_init(); // 設 stvec, 不然 interrupt 來了不知道跳哪裡
+
+    task_init(); // 初始化 task queue
 
     timer_init(); // 開 timer interrupt
     
