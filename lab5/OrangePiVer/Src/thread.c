@@ -3,11 +3,16 @@
 
 static struct task_struct tasks[MAX_THREADS];
 static unsigned char stacks[MAX_THREADS][STACK_SIZE] __attribute__((aligned(16)));
+unsigned char user_stacks[MAX_THREADS][USER_STACK_SIZE] __attribute__((aligned(16)));
 
 static struct task_struct *run_queue_tail = 0;
 static struct task_struct *idle_task = 0;
 
 static int next_pid = 1;
+
+int task_index(struct task_struct *task) {
+    return task - tasks;
+}
 
 static void runq_add(struct task_struct *task) {
     if (run_queue_tail == 0) {
@@ -104,6 +109,12 @@ void thread_init(void) {
         tasks[i].stack_base = 0;
         tasks[i].next = 0;
         clear_context(&tasks[i].context); // clear ra, sp, s0-s11
+        tasks[i].is_user = 0;
+        tasks[i].exit_status = 0;
+        tasks[i].kernel_sp = 0;
+        tasks[i].user_stack_base = 0;
+        tasks[i].user_stack_top = 0;
+        tasks[i].parent = 0;
     }
 
     idle_task = &tasks[0];

@@ -226,36 +226,50 @@ void uart_putc(char c) {
     if (c == '\n')
         uart_putc('\r');
 
-    if (!uart_async_enabled) {
-        while ((*uart_lsr() & LSR_TDRQ) == 0)
-            ;
-        *uart_thr() = (uart_reg_t)c;
-        return;
-    }
+    /*
+     * TX output 使用 polling。
+     * 不依賴 TX interrupt，避免在 trap/syscall context 內輸出卡住。
+     */
+    while ((*uart_lsr() & LSR_TDRQ) == 0)
+        ;
 
-    while (1) {
-        unsigned long s = local_irq_save();
-        unsigned int n = next_idx(tx_w);
-
-        if (n != tx_r) {
-            tx_buf[tx_w] = c;
-            tx_w = n;
-
-            uart_enable_tx_interrupt();
-            uart_tx_kick_locked();
-
-            local_irq_restore(s);
-            return;
-        }
-
-        /*
-         * tx buffer 滿了。
-         * 先嘗試 kick TX，釋放一些空間。
-         */
-        uart_tx_kick_locked();
-        local_irq_restore(s);
-    }
+    *uart_thr() = (uart_reg_t)c;
 }
+
+// void uart_putc(char c) {
+//     if (c == '\n')
+//         uart_putc('\r');
+
+//     if (!uart_async_enabled) {
+//         while ((*uart_lsr() & LSR_TDRQ) == 0)
+//             ;
+//         *uart_thr() = (uart_reg_t)c;
+//         return;
+//     }
+
+//     while (1) {
+//         unsigned long s = local_irq_save();
+//         unsigned int n = next_idx(tx_w);
+
+//         if (n != tx_r) {
+//             tx_buf[tx_w] = c;
+//             tx_w = n;
+
+//             uart_enable_tx_interrupt();
+//             uart_tx_kick_locked();
+
+//             local_irq_restore(s);
+//             return;
+//         }
+
+//         /*
+//          * tx buffer 滿了。
+//          * 先嘗試 kick TX，釋放一些空間。
+//          */
+//         uart_tx_kick_locked();
+//         local_irq_restore(s);
+//     }
+// }
 
 void uart_puts(const char *s) {
     while (*s)

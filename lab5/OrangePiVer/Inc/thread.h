@@ -1,8 +1,11 @@
 #ifndef THREAD_H
 #define THREAD_H
 
+#include "trap.h"
+
 #define MAX_THREADS 16
 #define STACK_SIZE  16384
+#define USER_STACK_SIZE 16384
 
 typedef void (*thread_fn_t)(void);
 
@@ -37,6 +40,17 @@ struct task_struct {
 
     unsigned long stack_base; // thread 的 stack 起點（stack grows downwards）
     struct task_struct *next;
+
+    int is_user; // 區分 kernel thread / user process
+    int exit_status; // kernel 需要記住它是用什麼 status 結束
+
+    struct trap_frame trapframe; // 保存 user process 在 user-mode 的 register 狀態
+
+    unsigned long kernel_sp; // user process trap 進 kernel 時要切到哪個 kernel stack top
+    unsigned long user_stack_base;
+    unsigned long user_stack_top;
+
+    struct task_struct *parent;
 };
 
 static inline struct task_struct *get_current(void) {
@@ -53,5 +67,8 @@ void kill_zombies(void);
 void idle(void);
 
 void switch_to(struct task_struct *prev, struct task_struct *next);
+
+int task_index(struct task_struct *task);
+extern unsigned char user_stacks[MAX_THREADS][USER_STACK_SIZE];
 
 #endif

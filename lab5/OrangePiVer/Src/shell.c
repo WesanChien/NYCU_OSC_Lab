@@ -10,6 +10,7 @@
 #include "irq.h"
 #include "task.h"
 #include "thread_test.h"
+#include "user_test.h"
 
 #define TIMEOUT_MSG_MAX 16
 #define TIMEOUT_MSG_LEN 128
@@ -103,6 +104,7 @@ static void print_help(void) {
     uart_puts("  setTimeout <sec> <msg> - print message after seconds\n");
     uart_puts("  tasktest    - run advanced exercise 2 task queue test\n");
     uart_puts("  threadtest  - run thread test\n");
+    uart_puts("  usertest    - run user process test\n");
 }
 
 void shell_run(unsigned long fdt_addr) {
@@ -197,7 +199,9 @@ void shell_run(unsigned long fdt_addr) {
             task_queue_adv2_test();
         } else if (str_eq(buf, "threadtest")) {
             run_thread_test();
-        }else if (buf[0] != '\0') {
+        } else if (str_eq(buf, "usertest")) {
+            run_user_test();
+        } else if (buf[0] != '\0') {
             uart_puts("Unknown command: ");
             uart_puts(buf);
             uart_puts("\n");

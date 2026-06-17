@@ -53,5 +53,7 @@ void start_kernel(unsigned long fdt_addr) {
 
     thread_init();
 
+    trap_init();
+
     shell_run(fdt_addr);
 }

@@ -4,10 +4,8 @@
 #include "plic.h"
 #include "uart.h"
 #include "task.h"
-
-#define SCAUSE_INTERRUPT_MASK       (1UL << 63)
-#define SCAUSE_ECALL_FROM_U         8UL
-#define SCAUSE_SUPERVISOR_TIMER     5UL
+#include "syscall.h"
+#include "thread.h"
 
 #define SCAUSE_INTERRUPT_MASK        (1UL << 63)
 #define SCAUSE_SUPERVISOR_TIMER      5UL
@@ -45,21 +43,20 @@ void do_trap(struct trap_frame *tf) {
         handled = 1;
     } 
     else if (!is_interrupt && cause == SCAUSE_ECALL_FROM_U) {
-        uart_puts("=== S-mode trap ===\n");
-
-        uart_puts("scause: ");
-        uart_dec(tf->scause);
-        uart_puts("\n");
-
-        uart_puts("sepc: ");
-        uart_hex(tf->sepc);
-        uart_puts("\n");
-
-        uart_puts("stval: ");
-        uart_hex(tf->stval);
-        uart_puts("\n");
-
+        /*
+         * user ecall 的 sepc 指向 ecall 指令本身。
+         * 必須 +4，否則 sret 回 user 後會重複執行同一個 ecall。
+         */
         tf->sepc += 4;
+        
+        /*
+         * syscall number 在 a7。
+         * syscall 參數在 a0, a1, a2...
+         * return value 要寫回 a0。
+         */
+        long ret = syscall_handler(tf);
+        tf->a0 = ret;
+        
         handled = 1;
     }
 

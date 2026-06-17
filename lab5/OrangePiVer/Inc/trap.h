@@ -42,5 +42,6 @@ struct trap_frame {
 
 void trap_init(void);
 void do_trap(struct trap_frame *tf);
+void return_to_user(struct trap_frame *tf);
 
 #endif
