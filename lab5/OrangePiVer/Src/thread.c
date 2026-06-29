@@ -181,6 +181,13 @@ void schedule(void) {
     switch_to(prev, next);
 }
 
+/*
+ * 取得 current task
+ * 選下一個要跑的 task
+ * 把 current 從 run queue 移除
+ * current->state = TASK_ZOMBIE
+ * switch_to(current, next)
+ */
 void thread_exit(void) {
     struct task_struct *prev = get_current();
 
@@ -189,7 +196,15 @@ void thread_exit(void) {
             schedule();
     }
 
-    struct task_struct *next = pick_next(prev);
+    struct task_struct *next = 0;
+
+    if (prev->parent &&
+        prev->parent->state != TASK_UNUSED &&
+        prev->parent->state != TASK_ZOMBIE) {
+        next = prev->parent;
+    } else {
+        next = pick_next(prev);
+    }
 
     runq_remove(prev);
 
@@ -208,14 +223,20 @@ void thread_exit(void) {
 
 void kill_zombies(void) {
     for (int i = 1; i < MAX_THREADS; i++) {
-        if (tasks[i].state == TASK_ZOMBIE) {
-            tasks[i].pid = -1;
-            tasks[i].state = TASK_UNUSED;
-            tasks[i].entry = 0;
-            tasks[i].stack_base = 0;
-            tasks[i].next = 0;
-            clear_context(&tasks[i].context);
+        if (tasks[i].state != TASK_ZOMBIE)
+            continue;
+
+        /*
+         * 如果 parent 是 user process，先不要由 idle 自動清。
+         * 讓 parent 用 waitpid() 回收。
+         */
+        if (tasks[i].parent && tasks[i].parent->is_user &&
+            tasks[i].parent->state != TASK_UNUSED &&
+            tasks[i].parent->state != TASK_ZOMBIE) {
+            continue;
         }
+
+        task_reap(&tasks[i]);
     }
 }
 
@@ -224,4 +245,88 @@ void idle(void) {
         kill_zombies();
         schedule(); // 持續讓出 CPU 給其他 runnable thread
     }
+}
+
+/*
+ * 根據 pid 找到對應的 task address inside the tasks[] array
+ */
+struct task_struct *task_find_by_pid(long pid) {
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (tasks[i].state != TASK_UNUSED && tasks[i].pid == pid)
+            return &tasks[i];
+    }
+
+    return 0;
+}
+
+/*
+ * 回收 zombie task, 把 child 的 task_struct 清乾淨
+ */
+void task_reap(struct task_struct *task) {
+    if (task == 0)
+        return;
+
+    if (task == idle_task)
+        return;
+
+    if (task->state != TASK_ZOMBIE)
+        return;
+
+    task->pid = -1;
+    task->state = TASK_UNUSED;
+    task->entry = 0;
+    task->stack_base = 0;
+    task->next = 0;
+
+    task->is_user = 0;
+    task->exit_status = 0;
+    task->kernel_sp = 0;
+    task->user_stack_base = 0;
+    task->user_stack_top = 0;
+    task->parent = 0;
+
+    clear_context(&task->context);
+
+    unsigned long *p = (unsigned long *)&task->trapframe;
+    for (int i = 0; i < sizeof(struct trap_frame) / sizeof(unsigned long); i++)
+        p[i] = 0;
+}
+
+/*
+ * 如果 task 還活著，就標成 TASK_ZOMBIE, 從 run queue 移除
+ * waitpid(pid) 之後可以回收它
+ * 如果 stop 自己，就直接走正常 thread_exit()
+ */
+int task_kill(long pid, int status) {
+    struct task_struct *task = task_find_by_pid(pid);
+
+    if (task == 0)
+        return -1;
+
+    if (task == idle_task)
+        return -1;
+
+    if (task->state == TASK_UNUSED || task->state == TASK_ZOMBIE)
+        return -1;
+
+    /*
+     * 如果 stop 自己，就直接走正常 thread_exit()
+     */
+    if (task == get_current()) {
+        task->exit_status = status;
+        thread_exit();
+
+        return 0;
+    }
+
+    /*
+     * 目標不是目前正在跑的 task。
+     * 單核心下它一定不在 CPU 上，直接從 run queue 移除並標成 zombie。
+     */
+    runq_remove(task);
+
+    task->exit_status = status;
+    task->state = TASK_ZOMBIE;
+
+    return 0;
 }

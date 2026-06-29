@@ -71,4 +71,8 @@ void switch_to(struct task_struct *prev, struct task_struct *next);
 int task_index(struct task_struct *task);
 extern unsigned char user_stacks[MAX_THREADS][USER_STACK_SIZE];
 
+struct task_struct *task_find_by_pid(long pid);
+void task_reap(struct task_struct *task);
+int task_kill(long pid, int status);
+
 #endif

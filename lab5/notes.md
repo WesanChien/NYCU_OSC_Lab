@@ -1,7 +1,13 @@
 # EX1:
-kernel thread 只跑在 S-mode,
+#### kernel thread 
+只跑在 S-mode,
 每個 thread 有自己的 kernel stack,
 thread 之間靠 switch_to() 切換
+
+#### user process 
+task struct + user/kernel stack + trap frame + 一個 kernel thread 外殼 user_process_entry(),
+但實際 user program 會透過 sret 進入 U-mode 執行
+
 ## asm volatile(
     "assembly code"
     : output operands
@@ -45,6 +51,7 @@ user process 有：
 3. trap frame
 4. user-mode entry point
 5. syscall 能力
+
 ### thread_create(user_process_entry);
 user_program 不能直接用 S-mode 的普通 function call 方式執行。
 如果 thread_create(user_program);
@@ -70,3 +77,51 @@ RISC-V 硬體會做幾件事：
 3. sepc = ecall 指令的位置
 4. sstatus.SPP = 0，代表 trap 前是 U-mode
 5. 跳到 stvec 指向的 trap entry
+
+## 目前 kernel 整體可以分成三層:
+最底層：context switch
+    switch_to()
+    保存/還原 ra, sp, s0~s11
+    更新 tp = next task
+
+中間層：task / scheduler
+    task_struct
+    run queue
+    schedule()
+    thread_create()
+    thread_exit()
+    task_reap()
+    task_kill()
+
+上層：user process / syscall
+    user_process_create()
+    user_process_entry()
+    trap_frame
+    ecall
+    syscall_handler()
+    fork/waitpid/exit/stop/exec
+
+## 不是直接把 user_program() 當 kernel thread 跑，而是：
+    thread_create(user_process_entry)
+        ↓
+    user_process_entry() 在 S-mode 執行
+        ↓
+    設定 sscratch = current->kernel_sp
+        ↓
+    return_to_user(&current->trapframe)
+        ↓
+    sret
+        ↓
+    CPU 進入 U-mode
+        ↓
+    開始執行真正的 user program
+
+所以 user process 的啟動分兩段：
+S-mode kernel 外殼：user_process_entry()
+U-mode 真正程式：user_program / user_fork_test / user_stop_test / user_exec_test
+
+## 目前 Lab5 的實作中：
+task_struct 是 scheduler 管理的基本執行單位。
+一開始它比較像 kernel thread。
+後來加上 trap_frame、user stack、parent、exit_status 之後，
+它也被拿來表示 user process。

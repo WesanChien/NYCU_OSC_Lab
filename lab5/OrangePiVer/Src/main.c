@@ -37,7 +37,7 @@ void start_kernel(unsigned long fdt_addr) {
 
     mm_init(fdt, (unsigned long)rd_start, (unsigned long)rd_end);
 
-    uart_puts("\nStarting OSC Lab5 ex1 kernel ...\n");
+    uart_puts("\nStarting OSC Lab5 ex2 kernel ...\n");
 
     uart_puts("Type 'help' for commands.\n");
 

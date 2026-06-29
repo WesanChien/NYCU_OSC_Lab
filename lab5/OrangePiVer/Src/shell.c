@@ -105,6 +105,9 @@ static void print_help(void) {
     uart_puts("  tasktest    - run advanced exercise 2 task queue test\n");
     uart_puts("  threadtest  - run thread test\n");
     uart_puts("  usertest    - run user process test\n");
+    uart_puts("  forktest    - run user process fork test\n");
+    uart_puts("  stoptest    - run user process stop test\n");
+    uart_puts("  exectest    - run user process exec test\n");
 }
 
 void shell_run(unsigned long fdt_addr) {
@@ -201,6 +204,12 @@ void shell_run(unsigned long fdt_addr) {
             run_thread_test();
         } else if (str_eq(buf, "usertest")) {
             run_user_test();
+        } else if (str_eq(buf, "forktest")) {
+            run_fork_test();
+        } else if (str_eq(buf, "stoptest")) {
+            run_stop_test();
+        } else if (str_eq(buf, "exectest")) {
+            run_exec_test();
         } else if (buf[0] != '\0') {
             uart_puts("Unknown command: ");
             uart_puts(buf);

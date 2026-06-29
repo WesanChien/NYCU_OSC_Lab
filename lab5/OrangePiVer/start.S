@@ -160,6 +160,23 @@ handle_exception:
     ld t0, 32 * 8(sp)
     csrw sstatus, t0
 
+     /*
+     * 重要：
+     * sscratch 是 per-hart CSR，不是 per-task。
+     * 如果在 syscall handler 裡 schedule() 到其他 user process，
+     * sscratch 可能已經被其他 process 的 trap 改掉。
+     *
+     * 所以回去前必須從目前 trap_frame 重新載入 interrupted sp。
+     *
+     * U-mode trap:
+     *     tf->sp = user sp
+     *
+     * S-mode trap:
+     *     tf->sp = 原本 kernel sp
+     */
+    ld t0, 1 * 8(sp)
+    csrw sscratch, t0
+
     /*
      * 還原 general registers
      */
@@ -200,15 +217,6 @@ handle_exception:
     addi sp, sp, TF_SIZE
 
     /*
-     * 回去前要看這次 trap 原本是從 U-mode 還是 S-mode 來。
-     * 注意：這裡 sstatus 已經被還原成 trap 發生時的 sstatus，
-     * 裡面仍然有 SPP。
-     */
-    csrr t0, sstatus
-    andi t0, t0, SSTATUS_SPP
-    bnez t0, 4f
-
-    /*
      * 如果原本是 U-mode trap，回去前要把 stack 換回 user stack。
      *
      * 交換前：
@@ -220,8 +228,6 @@ handle_exception:
      *     sscratch = kernel stack
      */
     csrrw sp, sscratch, sp
-
-4:
     sret
 
 .global switch_to
