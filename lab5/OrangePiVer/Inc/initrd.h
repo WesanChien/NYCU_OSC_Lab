@@ -7,6 +7,6 @@ int initrd_available(void);
 void initrd_list(void);
 void initrd_cat(const char* filename);
 
-int initrd_find_file(const char *filename, const char **data, unsigned long *size);
+int initrd_find_file(const char *path, const char **data, unsigned long *size);
 
 #endif

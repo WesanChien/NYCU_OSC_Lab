@@ -1,6 +1,7 @@
 #include "mm.h"
 #include "uart.h"
 #include "fdt.h"
+#include "user_addr.h"
 
 #define NULL ((void *)0)
 
@@ -886,6 +887,29 @@ void mm_init(const void *fdt, unsigned long initrd_start, unsigned long initrd_e
 
     if (initrd_start && initrd_end && initrd_end > initrd_start)
         early_reserve_add(initrd_start, initrd_end - initrd_start, "Initramfs");
+    /*
+     * Reserve User Program load region.
+     *
+     * exec(path) 會把 user binary 載入到 USER_PROG_BASE。
+     * 這段 memory 不能被 buddy allocator 或 chunk allocator 分配出去，
+     * 否則 user program 會覆蓋 kernel heap / page allocation 使用中的資料。
+     */
+    unsigned long user_prog_start = USER_PROG_BASE;
+    unsigned long user_prog_end = USER_PROG_BASE + USER_PROG_MAX_SIZE;
+    unsigned long managed_end = managed_base + managed_size;
+
+    uart_puts("[MM] User program region: ");
+    uart_hex(user_prog_start);
+    uart_puts(" - ");
+    uart_hex(user_prog_end);
+    uart_puts("\n");
+
+    if (user_prog_end <= managed_base || user_prog_start >= managed_end) {
+        uart_puts("[MM] Warning: UserProgram region is outside managed memory\n");
+        uart_puts("[MM] This is OK only if the address is still valid RAM\n");
+    }
+
+    early_reserve_add(USER_PROG_BASE, USER_PROG_MAX_SIZE, "UserProgram");
 
     /*
      * Step 2:

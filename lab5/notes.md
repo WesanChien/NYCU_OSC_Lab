@@ -125,3 +125,42 @@ task_struct 是 scheduler 管理的基本執行單位。
 一開始它比較像 kernel thread。
 後來加上 trap_frame、user stack、parent、exit_status 之後，
 它也被拿來表示 user process。
+
+## exec from initrd 流程：
+kernel shell:
+    exec osctest.bin
+        ↓
+shell.c:
+    user_process_create_from_file("osctest.bin")
+        ↓
+user.c:
+    user_load_image_from_initrd("osctest.bin", &entry)
+        ↓
+user_loader.c:
+    initrd_find_file("osctest.bin", &file_data, &file_size)
+        ↓
+initrd.c:
+    掃描 cpio newc archive，找到 osctest.bin
+        ↓
+user_loader.c:
+    copy file_data 到 USER_PROG_BASE = 0x03000000
+    fence.i
+    entry = USER_PROG_BASE
+        ↓
+user.c:
+    建立 task_struct
+    設定 user stack
+    設定 trapframe.sepc = entry
+        ↓
+scheduler:
+    schedule 到該 task
+        ↓
+user_process_entry()
+    設定 sscratch = kernel_sp
+    return_to_user(&trapframe)
+        ↓
+sret
+        ↓
+CPU 進 U-mode
+        ↓
+開始執行 osctest.bin

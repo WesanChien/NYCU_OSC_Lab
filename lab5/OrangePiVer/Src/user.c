@@ -2,6 +2,7 @@
 #include "trap.h"
 #include "user.h"
 #include "uart.h"
+#include "user_loader.h"
 
 extern void user_program(void);
 extern void user_fork_test(void);
@@ -50,6 +51,10 @@ static void setup_user_sstatus(struct trap_frame *tf) {
     tf->sstatus = sstatus;
 }
 
+/*
+ * 設定 user process 第一次 sret 要用的狀態
+ * 這個 trap frame 會在 user_process_entry 裡的 return_to_user() 被 restore
+ */
 static void setup_user_trapframe(struct task_struct *task, struct trap_frame *tf, void (*entry)(void)) {
     mem_zero(tf, sizeof(struct trap_frame));
 
@@ -57,7 +62,7 @@ static void setup_user_trapframe(struct task_struct *task, struct trap_frame *tf
     tf->sp = task->user_stack_top;
 
     /*
-     * 目前你的 kernel 用 tp 當 current task pointer。
+     * 目前 kernel 用 tp 當 current task pointer。
      * user mode 回來 trap 時，handle_exception 會保存 tp，
      * do_trap() 裡的 get_current() 也依賴 tp 還是 current task。
      */
@@ -130,6 +135,44 @@ struct task_struct *user_process_create(void (*entry)(void)) {
     mem_zero((void *)task->user_stack_base, USER_STACK_SIZE);
 
     setup_user_trapframe(task, &task->trapframe, entry);
+
+    return task;
+}
+
+struct task_struct *user_process_create_from_file(const char *path) {
+    void *entry = 0;
+
+    if (user_load_image_from_initrd(path, &entry) < 0) // 把 XXXX.bin load 到 user program base: 0x03000000
+        return 0;
+
+    struct task_struct *task = thread_create(user_process_entry);
+
+    if (task == 0)
+        return 0;
+
+    int idx = task_index(task);
+
+    task->is_user = 1;
+    task->exit_status = 0;
+    task->parent = get_current();
+
+    task->user_stack_base = (unsigned long)user_stacks[idx];
+    task->user_stack_top = (unsigned long)&user_stacks[idx][USER_STACK_SIZE];
+    task->user_stack_top &= ~0xFUL;
+
+    task->kernel_sp = task->context.sp;
+
+    mem_zero((void *)task->user_stack_base, USER_STACK_SIZE);
+
+    setup_user_trapframe(task, &task->trapframe, (void (*)(void))entry);
+
+    // uart_puts("[create user file] pid=");
+    // uart_dec(task->pid);
+    // uart_puts(" task=");
+    // uart_hex((unsigned long)task);
+    // uart_puts(" is_user=");
+    // uart_dec(task->is_user);
+    // uart_puts("\n");
 
     return task;
 }
@@ -217,9 +260,14 @@ int user_exec_current(const char *path, struct trap_frame *tf) {
     if (current == 0 || !current->is_user)
         return -1;
 
-    void (*entry)(void) = resolve_user_program(path);
+    void *entry = 0;
 
-    if (entry == 0)
+    /*
+     * 注意：
+     * 要先 load image，再清 user stack。
+     * 因為 path 可能在 user stack 或 user image 裡。
+     */
+    if (user_load_image_from_initrd(path, &entry) < 0)
         return -1;
 
     int idx = task_index(current);

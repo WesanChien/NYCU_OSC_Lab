@@ -11,6 +11,8 @@
 #include "task.h"
 #include "thread_test.h"
 #include "user_test.h"
+#include "user.h"
+#include "thread.h"
 
 #define TIMEOUT_MSG_MAX 16
 #define TIMEOUT_MSG_LEN 128
@@ -90,6 +92,27 @@ static void set_timeout_callback(void *arg) { // timer 到期後會呼叫這個 
     timeout_msg_free(m);
 }
 
+static void wait_user_task_done(struct task_struct *task) {
+    while (task->state != TASK_ZOMBIE && task->state != TASK_UNUSED)
+        schedule();
+
+    if (task->state == TASK_ZOMBIE)
+        task_reap(task);
+}
+
+static void run_user_file(const char *path) {
+    struct task_struct *task = user_process_create_from_file(path);
+
+    if (task == 0) {
+        uart_puts("exec failed: ");
+        uart_puts(path);
+        uart_puts("\n");
+        return;
+    }
+
+    wait_user_task_done(task);
+}
+
 static void print_help(void) {
     uart_puts("Available commands:\n");
     uart_puts("  help        - show this help message\n");
@@ -162,13 +185,6 @@ void shell_run(unsigned long fdt_addr) {
             mm_dump();
         } else if (str_eq(buf, "memtest")) {
             mm_test();
-        } else if (starts_with(buf, "exec")  && (buf[4] == '\0' || buf[4] == ' ' || buf[4] == '\t')) {
-            const char *name = skip_spaces(buf + 4);
-            
-            if (*name == '\0')
-                uart_puts("Usage: exec <file>\n");
-            else
-                exec_user_program(name);
         } else if (starts_with(buf, "setTimeout") && (buf[10] == '\0' || buf[10] == ' ' || buf[10] == '\t')) {
             const char *p = skip_spaces(buf + 10);
             int sec = 0;
@@ -208,8 +224,17 @@ void shell_run(unsigned long fdt_addr) {
             run_fork_test();
         } else if (str_eq(buf, "stoptest")) {
             run_stop_test();
-        } else if (str_eq(buf, "exectest")) {
-            run_exec_test();
+        } else if (kstrncmp(buf, "exec ", 5) == 0) {
+            char *path = buf + 5;
+
+            while (*path == ' ')
+                path++;
+
+            if (*path == 0) {
+                uart_puts("usage: exec <file>\n");
+            } else {
+                run_user_file(path);
+            }
         } else if (buf[0] != '\0') {
             uart_puts("Unknown command: ");
             uart_puts(buf);

@@ -138,7 +138,7 @@ void initrd_cat(const char* filename) {
     uart_puts("\n");
 }
 
-int initrd_find_file(const char *filename, const char **data, unsigned long *size) {
+int initrd_find_file(const char *path, const char **data, unsigned long *size) {
     if (!initrd_available()) {
         uart_puts("No initrd loaded\n");
         return -1;
@@ -151,14 +151,13 @@ int initrd_find_file(const char *filename, const char **data, unsigned long *siz
      * 如果剩餘空間連 header 都放不下，就停止, 避免越界。
      */
     while ((unsigned long)p + sizeof(struct cpio_newc_header) <= (unsigned long)initrd_end) {
-        const struct cpio_newc_header *hdr =
-            (const struct cpio_newc_header *)p;
+        const struct cpio_newc_header *hdr = (const struct cpio_newc_header *)p;
 
         /*
          * newc 格式的 magic 固定是 "070701"。
          * 如果不是，代表 initrd base 錯、資料壞掉，或 p 算錯。
          */
-        if (kstrncmp(hdr->c_magic, "070701", 6) != 0) {
+        if (kstrncmp(hdr->c_magic, "070701", 6) != 0) { // 確認目前 p 真的指到一個合法 cpio entry
             uart_puts("Bad cpio magic\n");
             return -1;
         }
@@ -186,7 +185,7 @@ int initrd_find_file(const char *filename, const char **data, unsigned long *siz
             return -1;
         }
 
-        if (filename_match(name, filename)) {
+        if (filename_match(name, path)) {
             if (data)
                 *data = file_data;
 
@@ -198,11 +197,13 @@ int initrd_find_file(const char *filename, const char **data, unsigned long *siz
 
         /*
          * 移到下一個 cpio entry。
+         * initrd 是 cpio newc 格式:
+         * [cpio header][filename][padding][file data][padding]
+         * ...
+         * [TRAILER!!!]
          *
          * 下一個 entry 的位置 =
-         *     目前 entry 起點 + header
-         *   + filename area + padding
-         *   + file data + padding
+         *     目前 entry 起點 + header + filename area + padding + file data + padding
          */
         unsigned long off = data_off + filesize;
         off = align_up_val(off, 4);
