@@ -4,10 +4,11 @@
 #include "irq.h"
 #include "task.h"
 
-#define TIMER_FREQ          24000000UL
-#define BOOT_TICK_SEC       2
-#define TIMER_POOL_SIZE     32
-#define SIE_STIE (1UL << 5)
+#define TIMER_FREQ      24000000UL
+#define TIMER_HZ        32 // 每秒 32 次 timer interrupt
+#define BOOT_TICK_SEC   2
+#define TIMER_POOL_SIZE 32
+#define SIE_STIE        (1UL << 5)
 
 struct timer_event {
     unsigned long expires_at;
@@ -21,6 +22,8 @@ static struct timer_event *timer_free_list = 0; // 記錄目前哪些 timer_even
 static struct timer_event *timer_head = 0; // 指向最早到期的 timer event
 
 static unsigned long boot_time_base = 0;
+static unsigned long sched_tick_interval = 0; // 每次 scheduler tick 間隔多少 time ticks
+static unsigned long sched_next_tick = 0; // 下一次 scheduler tick 的 rdtime 值
 
 static inline void enable_stie(void) {
     asm volatile("csrs sie, %0" :: "r"(SIE_STIE));
@@ -56,31 +59,39 @@ static void timer_free_node(struct timer_event *n) { // event 執行完了，把
     timer_free_list = n;
 }
 
-static void timer_program_next_locked(void) { // 根據 timer_head 設定 hardware timer
-    if (timer_head) {
-        long err = sbi_set_timer(timer_head->expires_at); // 把硬體 timer 設成最早到期的 software timer
+/*
+ * 設定下一次 hardware timer。
+ * 這個 function 只在 interrupts disabled 狀態下呼叫。
+ * Lab5 改成就算沒有任何 add_timer() event，timer interrupt 也會因為 sched_next_tick 繼續發生
+ */
+static void timer_program_next_locked(void) {
+    unsigned long next = sched_next_tick;
 
-        if (err != 0) {
-            uart_puts("[timer] sbi_set_timer error: ");
-            uart_hex(err);
-            uart_puts("\n");
-        }
+    /*
+     * 如果 software timer 比 scheduler tick 更早到期，
+     * hardware timer 就先設到 software timer。
+     */
+    if (timer_head && timer_head->expires_at < next)
+        next = timer_head->expires_at;
 
-        enable_stie();
-    } else {
-        /*
-         * 沒有任何 timer event。
-         *
-         * 必須停止 timer interrupt，不然目前 timer compare value
-         * 可能已經過期，CPU 會一直進 timer interrupt。
-         */
-        sbi_set_timer(~0UL);
-        disable_stie();
+    long err = sbi_set_timer(next);
+
+    if (err != 0) {
+        uart_puts("[timer] sbi_set_timer error: ");
+        uart_hex(err);
+        uart_puts("\n");
     }
+
+    /*
+     * Lab5 EX3 需要固定 timer interrupt(per 1/32 sec)
+     * 所以不要因為 timer_head == NULL 就 disable STIE。
+     * 原本 Lab4 是無 software timer 就 disable STIE，避免浪費 CPU 時間。
+     */
+    enable_stie();
 }
 
 /*
- * 為了保留 Basic Exercise 2 的 boot time 輸出。
+ * 為了保留 Lab4 Basic EX 2 的 boot time 輸出。
  * 它本身也是一個 software timer。
  */
 static void boot_tick_callback(void *arg) {
@@ -98,6 +109,9 @@ static void boot_tick_callback(void *arg) {
 
 void timer_init(void) {
     boot_time_base = read_time();
+
+    sched_tick_interval = TIMER_FREQ / TIMER_HZ; // 每 750000 個 time ticks 觸發一次，約 1/32 秒
+    sched_next_tick = boot_time_base + sched_tick_interval;
 
     timer_free_list = &timer_pool[0];
 
@@ -197,13 +211,32 @@ int add_timer(timer_callback_t callback, void *arg, int sec) {
 void timer_handle_interrupt(void) {
     while (1) {
         unsigned long s = local_irq_save();
-
         unsigned long now = read_time();
 
+        /*
+         * Step 1:
+         * 處理 scheduler tick。
+         *
+         * 如果現在已經超過 sched_next_tick，
+         * 就把 sched_next_tick 往後推到下一個未來時間。
+         *
+         * 用 while 是為了避免中間 kernel 忙太久，
+         * 已經錯過多個 tick，造成下一次 timer 設在過去。
+         */
+        while (sched_next_tick <= now) {
+            sched_next_tick += sched_tick_interval; // + 1/32 sec
+        }
+
+        /*
+         * Step 2:
+         * 如果沒有到期的 software timer，
+         * 就設定下一次 hardware timer 後返回。
+         */
         if (!timer_head || timer_head->expires_at > now) {
             /*
             * 如果 queue 空了：
             *     timer_program_next_locked() 會 disable STIE
+            *     (*Notes: Lab5 EX3 需要固定 1/32 sec trigger timer interrupt, 所以沒有 disable STIE)
             *
             * 如果還有下一個 timer：
             *     timer_program_next_locked() 會設下一次 timer
@@ -214,6 +247,7 @@ void timer_handle_interrupt(void) {
         }
 
         /*
+         * Step 3:
          * 取出最早到期的 timer。
          * 已經執行完的 event 可以依依放回 free list 了
          */
@@ -228,6 +262,7 @@ void timer_handle_interrupt(void) {
         local_irq_restore(s);
 
         /*
+         * Step 4:
          * timer interrupt handler 不直接執行 callback，
          * 而是把 callback 包成 task。
          */
@@ -266,4 +301,20 @@ void timer_trigger_now(void) {
     enable_stie();
 
     local_irq_restore(s);
+}
+
+unsigned long timer_get_time(void) {
+    return read_time();
+}
+
+unsigned long timer_get_time_us(void) {
+    unsigned long ticks = read_time() - boot_time_base;
+
+    /*
+     * 避免直接 ticks * 1000000 造成長時間運行後 overflow。
+     */
+    unsigned long sec = ticks / TIMER_FREQ;
+    unsigned long rem = ticks % TIMER_FREQ;
+
+    return sec * 1000000UL + (rem * 1000000UL) / TIMER_FREQ;
 }

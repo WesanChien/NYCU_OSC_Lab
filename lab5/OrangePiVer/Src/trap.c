@@ -11,6 +11,7 @@
 #define SCAUSE_SUPERVISOR_TIMER      5UL
 #define SCAUSE_SUPERVISOR_EXTERNAL   9UL
 #define SCAUSE_ECALL_FROM_U          8UL
+#define SSTATUS_SPP                  (1UL << 8) // Supervisor Previous Privilege
 
 #define UART0_IRQ_ID                 42U
 
@@ -27,6 +28,16 @@ void do_trap(struct trap_frame *tf) {
 
     if (is_interrupt && cause == SCAUSE_SUPERVISOR_TIMER) {
         timer_handle_interrupt();
+
+        /*
+         * 只在 timer interrupt 打斷 user process/U-mode 時才做 preemption。
+         * 如果 timer interrupt 發生在 kernel/S-mode 裡，
+         * 先不要切，避免在 kernel critical section 中途被切走。
+         */
+        if ((tf->sstatus & SSTATUS_SPP) == 0) { // bit 8 == 0, 代表 U-mode
+            schedule();
+        }
+        
         handled = 1;
     } 
     else if (is_interrupt && cause == SCAUSE_SUPERVISOR_EXTERNAL) {

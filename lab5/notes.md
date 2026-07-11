@@ -164,3 +164,58 @@ sret
 CPU 進 U-mode
         ↓
 開始執行 osctest.bin
+
+# EX3
+## timer 的修改：從「software timer」變成「periodic tick + software timer」
+
+你原本 Lab4 的 timer 是 software timer queue：
+
+add_timer(callback, arg, sec)
+    ↓
+把 timer_event 插進 sorted linked list
+    ↓
+hardware timer 設成最早到期的 event
+    ↓
+到期後執行 callback
+
+"如果沒有 software timer，就沒有必要一直進 timer interrupt"
+
+### EX3 需要：
+
+就算沒有 add_timer event，
+kernel 也要每 1/32 秒收到 timer interrupt，
+用來 preempt user process。
+
+所以把 timer 改成同時管理：
+
+1. software timer event
+   timer_head->expires_at
+
+2. scheduler tick
+   sched_next_tick
+
+### 這樣就算沒有任何 add_timer() event，timer interrupt 也會因為 sched_next_tick 繼續發生。
+
+## sys_uart_read 更動
+
+一開始的 sys_uart_read() 是 uart_getc(),它是 blocking function。
+沒有輸入時，它會一直等, 一直卡在 kernel S-mode 裡
+
+情況變成：
+
+user shell 等輸入
+    ↓
+ecall SYS_UART_READ
+    ↓
+kernel 進 sys_uart_read()
+    ↓
+uart_getc() blocking
+    ↓
+CPU 卡在 S-mode
+    ↓
+timer interrupt 來了，但 SPP=1，不 schedule
+    ↓
+video child 沒機會跑
+
+### 因此新增 non-blocking API：int uart_try_getc(char *out)
+

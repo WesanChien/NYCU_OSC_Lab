@@ -10,4 +10,7 @@ void timer_init(void);
 int add_timer(timer_callback_t callback, void *arg, int sec);
 void timer_trigger_now(void);
 
+unsigned long timer_get_time(void);
+unsigned long timer_get_time_us(void);
+
 #endif

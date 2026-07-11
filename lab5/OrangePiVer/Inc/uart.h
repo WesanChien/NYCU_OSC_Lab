@@ -11,4 +11,6 @@ void uart_dec(unsigned long x);
 void uart_enable_interrupt(void);
 void uart_handle_irq(void);
 
+int uart_try_getc(char *out);
+
 #endif

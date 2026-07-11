@@ -169,6 +169,66 @@ void uart_handle_irq(void) {
     local_irq_restore(s);
 }
 
+int uart_try_getc(char *out) {
+    if (out == 0) return 0;
+
+    /*
+     * Polling mode：
+     * hardware 有資料才讀，沒有就直接 return 0。
+     */
+    if (!uart_async_enabled) {
+        if ((*uart_lsr() & LSR_DR) == 0) // 如果 hardware LSR_DR 沒有資料
+            return 0;
+
+        char c = (char)(*uart_rbr());
+        *out = (c == '\r') ? '\n' : c;
+        return 1;
+    }
+
+    /*
+     * Interrupt mode：
+     * 先看 rx ring buffer。
+     */
+    unsigned long s = local_irq_save();
+
+    if (rx_r != rx_w) {
+        char c = rx_buf[rx_r];
+        rx_r = next_idx(rx_r);
+
+        local_irq_restore(s);
+
+        *out = (c == '\r') ? '\n' : c;
+        return 1;
+    }
+
+    local_irq_restore(s);
+
+    /*
+     * 保險：
+     * 如果 hardware 已經有資料，但 interrupt 還沒進來，
+     * 手動 drain 一次到 rx ring buffer。
+     */
+    if ((*uart_lsr() & LSR_DR) != 0) {
+        uart_handle_irq();
+
+        s = local_irq_save();
+
+        if (rx_r != rx_w) {
+            char c = rx_buf[rx_r];
+            rx_r = next_idx(rx_r);
+
+            local_irq_restore(s);
+
+            *out = (c == '\r') ? '\n' : c;
+            return 1;
+        }
+
+        local_irq_restore(s);
+    }
+
+    return 0;
+}
+
 char uart_getc(void) {
     if (!uart_async_enabled) {
         while ((*uart_lsr() & LSR_DR) == 0)

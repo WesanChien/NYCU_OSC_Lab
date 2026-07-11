@@ -3,6 +3,8 @@
 #include "thread.h"
 #include "uart.h"
 #include "user.h"
+#include "video.h"
+#include "timer.h"
 
 static long sys_getpid(void) {
     return get_current()->pid;
@@ -22,8 +24,19 @@ static long sys_uart_read(char *buf, long count) {
     if (buf == 0 || count < 0)
         return -1;
 
-    for (long i = 0; i < count; i++)
-        buf[i] = uart_getc();
+    for (long i = 0; i < count; i++) {
+        char c;
+
+        /*
+         * 沒有輸入時，不要卡在 kernel 裡 busy wait。
+         * 主動 schedule()，讓 video child 或其他 process 可以繼續跑。
+         */
+        while (!uart_try_getc(&c)) {
+            schedule();
+        }
+
+        buf[i] = c;
+    }
 
     return count;
 }
@@ -82,6 +95,23 @@ static long sys_stop(long pid) {
     return task_kill(pid, -1);
 }
 
+static long sys_display(unsigned int *bmp_image, unsigned int width, unsigned int height) { // 讓 user program 可以請 kernel 把 frame 畫到 framebuffer
+    return video_display(bmp_image, width, height);
+}
+
+/* 讓 video process 每張 frame 之間可以 sleep, 控制播放速度
+ * 讓 user process 暫停一段時間, 但不要讓 CPU 空轉卡住
+ */
+static long sys_usleep(unsigned int usec) {
+    unsigned long start = timer_get_time_us();
+
+    while (timer_get_time_us() - start < usec) { // 時間還沒到就 schedule(), 讓其他 task 跑, 下次切回 video child，再檢查時間
+        schedule();
+    }
+
+    return 0;
+}
+
 long syscall_handler(struct trap_frame *tf) {
     long syscall_no = tf->a7;
 
@@ -109,6 +139,12 @@ long syscall_handler(struct trap_frame *tf) {
 
     case SYS_STOP:
         return sys_stop(tf->a0);
+
+    case SYS_DISPLAY:
+        return sys_display((unsigned int *)tf->a0, (unsigned int)tf->a1, (unsigned int)tf->a2);
+
+    case SYS_USLEEP:
+        return sys_usleep((unsigned int)tf->a0);
 
     default:
         uart_puts("unknown syscall: ");
