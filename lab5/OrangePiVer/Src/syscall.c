@@ -5,6 +5,7 @@
 #include "user.h"
 #include "video.h"
 #include "timer.h"
+#include "signal.h"
 
 static long sys_getpid(void) {
     return get_current()->pid;
@@ -146,6 +147,15 @@ long syscall_handler(struct trap_frame *tf) {
     case SYS_USLEEP:
         return sys_usleep((unsigned int)tf->a0);
 
+    case SYS_SIGNAL:
+        return sys_signal((int)tf->a0, tf->a1);
+
+    case SYS_SIGRETURN:
+        return sys_sigreturn(tf);
+
+    case SYS_KILL:
+        return sys_kill(tf->a0, (int)tf->a1);
+        
     default:
         uart_puts("unknown syscall: ");
         uart_dec(syscall_no);

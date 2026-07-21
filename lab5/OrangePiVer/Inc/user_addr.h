@@ -15,4 +15,15 @@
 #define USER_PROG_BASE      0x03000000UL
 #define USER_PROG_MAX_SIZE  0x00400000UL   /* 4 MB */
 
+/*
+ * user program 最後一 page 保留給 signal trampoline
+ */
+#define USER_SIGTRAMP_SIZE      0x1000UL
+#define USER_SIGTRAMP_BASE      (USER_PROG_BASE + USER_PROG_MAX_SIZE - USER_SIGTRAMP_SIZE)
+
+/*
+ * 真正 user binary 可使用的最大大小
+ */
+#define USER_PROG_LOAD_MAX_SIZE (USER_PROG_MAX_SIZE - USER_SIGTRAMP_SIZE)
+
 #endif

@@ -3,6 +3,7 @@
 #include "user.h"
 #include "uart.h"
 #include "user_loader.h"
+#include "signal.h"
 
 extern void user_program(void);
 extern void user_fork_test(void);
@@ -122,6 +123,8 @@ struct task_struct *user_process_create(void (*entry)(void)) {
     task->exit_status = 0;
     task->parent = get_current();
 
+    signal_task_init(task); // 建立 user process 時初始化 signal
+
     task->user_stack_base = (unsigned long)user_stacks[idx];
     task->user_stack_top = (unsigned long)&user_stacks[idx][USER_STACK_SIZE];
     task->user_stack_top &= ~0xFUL; // stack pointer 16-byte alignment
@@ -155,6 +158,8 @@ struct task_struct *user_process_create_from_file(const char *path) {
     task->is_user = 1;
     task->exit_status = 0;
     task->parent = get_current();
+
+    signal_task_init(task); // 建立 user process 時初始化 signal
 
     task->user_stack_base = (unsigned long)user_stacks[idx];
     task->user_stack_top = (unsigned long)&user_stacks[idx][USER_STACK_SIZE];
@@ -251,6 +256,8 @@ long user_fork(struct trap_frame *parent_tf) {
 
     child->parent = parent;
 
+    signal_fork(parent, child); // fork 時繼承 signal handler, 但不繼承 pending signal / handling_signal
+
     return child->pid;
 }
 
@@ -269,6 +276,8 @@ int user_exec_current(const char *path, struct trap_frame *tf) {
      */
     if (user_load_image_from_initrd(path, &entry) < 0)
         return -1;
+
+    signal_task_init(current); 
 
     int idx = task_index(current);
 

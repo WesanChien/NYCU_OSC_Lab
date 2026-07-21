@@ -219,3 +219,11 @@ video child 沒機會跑
 
 ### 因此新增 non-blocking API：int uart_try_getc(char *out)
 
+# Advanced EX1
+流程：
+    OrangePi RV2> exec osctest.bin (U-mode)(osctest.bin 內原本就有一個 signal handler 函式)
+    $ signal (發起 SYS_SIGNAL 把 SIGTERM=15 與該 handler function 的位址登記到 task_struct.signal_handlers[15])
+    $ fork (child 繼承 parent task_struct 內已登記的 handler)
+    child pid: 2
+    $ kill 2 (SYS_KILL 請 kernel 對 pid 2 傳送 SIGTERM(15), 但 Kernel 發現 signal_handlers[15] 有 handler, 不採用預設終止行為, 把 pending_signals bit 15 = 1, 表示這個 process 有一個 SIGTERM 尚未處理, 返回 parent, child 下一次因 interrupt、syscall 或其他進入 kernel，而且準備回 U-mode 前，kernel 呼叫：signal_try_deliver(tf);裡面會找 pending signal)
+

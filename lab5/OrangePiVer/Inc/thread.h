@@ -7,6 +7,9 @@
 #define STACK_SIZE  16384
 #define USER_STACK_SIZE 16384
 
+#define MAX_SIGNALS        32
+#define SIGNAL_STACK_SIZE  16384
+
 typedef void (*thread_fn_t)(void);
 
 enum task_state {
@@ -51,6 +54,15 @@ struct task_struct {
     unsigned long user_stack_top;
 
     struct task_struct *parent;
+
+    unsigned long signal_handlers[MAX_SIGNALS]; // 記錄該 signal 對應的 user handler address, e.g. signal_handlers[15] = SIGTERM handler address
+
+    unsigned long pending_signals; // 32 bitsets: bit 0 = signal 0, bit 1 = signal 1, ..., bit 31 = signal 31
+
+    int handling_signal; // 目前是否已經在 signal handler 裡
+    int current_signal;
+
+    struct trap_frame signal_saved_tf; // signal 發生前的 user context, sigreturn 時要用它恢復原本執行狀態。
 };
 
 static inline struct task_struct *get_current(void) {

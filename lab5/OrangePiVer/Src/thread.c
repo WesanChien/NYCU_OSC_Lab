@@ -1,5 +1,6 @@
 #include "thread.h"
 #include "uart.h"
+#include "signal.h"
 
 static struct task_struct tasks[MAX_THREADS];
 static unsigned char stacks[MAX_THREADS][STACK_SIZE] __attribute__((aligned(16)));
@@ -288,8 +289,10 @@ void task_reap(struct task_struct *task) {
     clear_context(&task->context);
 
     unsigned long *p = (unsigned long *)&task->trapframe;
-    for (int i = 0; i < sizeof(struct trap_frame) / sizeof(unsigned long); i++)
+    for (int i = 0; i < sizeof(struct trap_frame) / sizeof(unsigned long); i++) {
         p[i] = 0;
+    }
+    signal_task_init(task);
 }
 
 /*

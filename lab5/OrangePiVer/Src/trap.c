@@ -6,6 +6,7 @@
 #include "task.h"
 #include "syscall.h"
 #include "thread.h"
+#include "signal.h"
 
 #define SCAUSE_INTERRUPT_MASK        (1UL << 63)
 #define SCAUSE_SUPERVISOR_TIMER      5UL
@@ -59,16 +60,34 @@ void do_trap(struct trap_frame *tf) {
          * 必須 +4，否則 sret 回 user 後會重複執行同一個 ecall。
          */
         tf->sepc += 4;
-        
+
+        long syscall_no = tf->a7; 
         /*
          * syscall number 在 a7。
          * syscall 參數在 a0, a1, a2...
          * return value 要寫回 a0。
          */
         long ret = syscall_handler(tf);
-        tf->a0 = ret;
+        /*
+         * sigreturn 會直接恢復整份 trapframe。
+         * 不可以再覆寫 a0。
+         */
+        if (syscall_no != SYS_SIGRETURN) {
+            tf->a0 = ret;
+        }
         
         handled = 1;
+    }
+
+    /*
+     * 回 U-mode 前檢查 pending signal。
+     * signal 在這些情況被送出：
+     * 1. user process syscall 結束，準備回 user mode 前。
+     * 2. user process 被 timer interrupt 打斷，準備回 user mode 前。
+     * 3. user process 被 UART/external interrupt 打斷，準備回 user mode 前。
+     */
+    if (handled && (tf->sstatus & SSTATUS_SPP) == 0) {
+        signal_try_deliver(tf);
     }
 
     if (!handled) {
