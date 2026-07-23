@@ -131,6 +131,8 @@ long sys_kill(long pid, int signum) {
     /*
      * 有 handler，不直接終止。
      * 將 signal 標記為等待送達。
+     * 不在這裡執行 handler，因為現在正在執行 kill() 的通常是 parent，
+     * 而 handler 必須在 target child 的 context 中執行
      */
     task->pending_signals |= signal_bit(signum); // |= 1UL << 15, pending_signals = 0000 0000 0000 0000 1000 0000 0000 0000
 
@@ -146,6 +148,10 @@ static int find_pending_signal(struct task_struct *task) {
     return 0;
 }
 
+/*
+ * 真正遞送 pending signal。
+ * 它會在 target process 準備回 U-mode 前被呼叫
+ */
 void signal_try_deliver(struct trap_frame *tf) {
     struct task_struct *current = get_current();
 
@@ -157,6 +163,7 @@ void signal_try_deliver(struct trap_frame *tf) {
 
     /*
      * 不處理 nested signal。
+     * 如果正在處理 signal，就不再送入第二個 signal。
      */
     if (current->handling_signal)
         return;
@@ -175,11 +182,12 @@ void signal_try_deliver(struct trap_frame *tf) {
 
     /*
      * 清掉 pending bit。
+     * 代表該 signal 已經開始 deliver，不再是等待狀態
      */
     current->pending_signals &= ~signal_bit(signum);
 
     /*
-     * 保存原本 user context。
+     * 保存原本 user context(Trap frame)。
      * sigreturn 時會恢復這份 trapframe。
      */
     mem_copy_local(&current->signal_saved_tf, tf, sizeof(struct trap_frame));

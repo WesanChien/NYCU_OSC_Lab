@@ -17,12 +17,23 @@
 
 /*
  * user program 最後一 page 保留給 signal trampoline
+ * trampoline 是一段 user-mode code，會在 signal handler return 後被執行
+ * signal handler 不是正常由 user program call 進去的。
+ * 是 kernel 強制修改：tf->sepc = handler;
+ * 所以 handler 結束後，不能直接回原本程式，因為原本程式的完整 context 存在 kernel 的 signal_saved_tf 裡。
+ * 因此需要 trampoline：
+ * handler ret
+ *     ↓
+ * USER_SIGTRAMP_BASE
+ *     ↓
+ * 執行 SYS_SIGRETURN
  */
 #define USER_SIGTRAMP_SIZE      0x1000UL
 #define USER_SIGTRAMP_BASE      (USER_PROG_BASE + USER_PROG_MAX_SIZE - USER_SIGTRAMP_SIZE)
 
 /*
  * 真正 user binary 可使用的最大大小
+ * Loader 的最大檔案大小也要縮小，避免 user program 載入後把 signal trampoline 蓋掉
  */
 #define USER_PROG_LOAD_MAX_SIZE (USER_PROG_MAX_SIZE - USER_SIGTRAMP_SIZE)
 

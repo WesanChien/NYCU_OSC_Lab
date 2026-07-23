@@ -220,10 +220,61 @@ video child 沒機會跑
 ### 因此新增 non-blocking API：int uart_try_getc(char *out)
 
 # Advanced EX1
-流程：
     OrangePi RV2> exec osctest.bin (U-mode)(osctest.bin 內原本就有一個 signal handler 函式)
-    $ signal (發起 SYS_SIGNAL 把 SIGTERM=15 與該 handler function 的位址登記到 task_struct.signal_handlers[15])
+    $ signal (發起 SYS_SIGNAL 把 SIGTERM = 15 與該 handler function 的位址登記到 task_struct.signal_handlers[15])
     $ fork (child 繼承 parent task_struct 內已登記的 handler)
     child pid: 2
-    $ kill 2 (SYS_KILL 請 kernel 對 pid 2 傳送 SIGTERM(15), 但 Kernel 發現 signal_handlers[15] 有 handler, 不採用預設終止行為, 把 pending_signals bit 15 = 1, 表示這個 process 有一個 SIGTERM 尚未處理, 返回 parent, child 下一次因 interrupt、syscall 或其他進入 kernel，而且準備回 U-mode 前，kernel 呼叫：signal_try_deliver(tf);裡面會找 pending signal)
+    $ kill 2 (SYS_KILL 請 kernel 對 pid 2 傳送 SIGTERM(15), 但 Kernel 發現 signal_handlers[15] 有 handler, 不採用預設終止行為, 設定 pending_signals bit 15 = 1, 表示這個 process 有一個 SIGTERM 尚未處理, 返回 parent, child 下一次因 interrupt、syscall 或其他進入 kernel，而且準備回 U-mode 前，kernel 呼叫：signal_try_deliver(tf);裡面會找 pending signal)
 
+流程：
+    SYS_SIGNAL
+        ↓
+    把 SIGTERM=15 對應的 handler address
+    存到 current->signal_handlers[15]
+
+    fork
+        ↓
+    child 繼承 parent 的 signal_handlers[]
+
+    SYS_KILL(pid=2, signum=15)
+        ↓
+    檢查 child->signal_handlers[15]
+        ↓
+    有 handler
+        ↓
+    不採用 SIGTERM 的預設終止行為
+        ↓
+    child->pending_signals 的 bit 15 設成 1
+
+    child 準備回 U-mode
+        ↓
+    kernel 發現 pending bit 15
+        ↓
+    清除 pending bit
+        ↓
+    保存原本 trap frame
+        ↓
+    切到 signal stack
+        ↓
+    把 sepc 改成 handler address, ra = signal trampoline, sp = signal stack, a0 = SIGTERM
+        ↓
+    sret 執行 handler
+
+    handler return
+        ↓
+    跳到 signal trampoline
+        ↓
+    SYS_SIGRETURN
+        ↓
+    恢復原本 trap frame
+        ↓
+    child 繼續執行
+
+Note *為什麼 kill 後不是立刻執行 handler？(概念並不是 SYS_EXEC)
+假設 parent(shell) 正在執行：
+    kill 2
+此時 current 是 parent，不是 child。
+kernel 只能把 signal 記到 child：
+    child->pending_signals |= 1UL << 15;
+等 scheduler 選到 child，child 透過 timer interrupt或 syscall 進 kernel時，get_current() 才會是 child。
+這時才能安全改 child 自己的 trap frame。

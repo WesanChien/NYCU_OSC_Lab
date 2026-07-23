@@ -59,10 +59,10 @@ struct task_struct {
 
     unsigned long pending_signals; // 32 bitsets: bit 0 = signal 0, bit 1 = signal 1, ..., bit 31 = signal 31
 
-    int handling_signal; // 目前是否已經在 signal handler 裡
-    int current_signal;
+    int handling_signal; // 目前是否正在 signal handler 裡, lab 不要求 nested signal，所以：if (current->handling_signal) return; 代表正在處理 signal 時，不再送入第二個 signal
+    int current_signal; // 目前正在處理的 signal 編號
 
-    struct trap_frame signal_saved_tf; // signal 發生前的 user context, sigreturn 時要用它恢復原本執行狀態。
+    struct trap_frame signal_saved_tf; // signal 發生前的 user context, sigreturn 時要用它恢復原本執行狀態, 因為 handler 要在 U-mode 執行，U-mode 和 S-mode 切換要保存 Trap frame
 };
 
 static inline struct task_struct *get_current(void) {

@@ -86,7 +86,7 @@ void do_trap(struct trap_frame *tf) {
      * 2. user process 被 timer interrupt 打斷，準備回 user mode 前。
      * 3. user process 被 UART/external interrupt 打斷，準備回 user mode 前。
      */
-    if (handled && (tf->sstatus & SSTATUS_SPP) == 0) {
+    if (handled && (tf->sstatus & SSTATUS_SPP) == 0) { // SPP=0 代表這次 trap 原本來自 U-mode
         signal_try_deliver(tf);
     }
 
