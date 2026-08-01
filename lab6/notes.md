@@ -76,3 +76,26 @@ RAM 和程式沒有複製, 只是 page table 提供兩條不同的入口。
 #### 因此 "Identity mapping 只是過渡用的橋"
 MMU 剛開啟時，維持低位址 PC 暫時可用,
 higer-half mapping 才是 kernel 最後永久使用的 VA
+
+# ex62
+只有一張 pgd, root page table 大致是：
+│
+├── pgd[0]：non-leaf
+│     └── PMD[0]：non-leaf
+│           └── PTE[0]：4 KiB leaf
+│                 └── User code page tables
+├── ...
+├── pgd[255]：non-leaf
+│     └── PMD[511]：non-leaf
+│           └── PTE[511]：4 KiB leaf
+│                 └── User stack page tables
+├── pgd[256]：Kernel 1 GiB leaf
+├── pgd[257]：Kernel 1 GiB leaf
+├── pgd[258]：Kernel 1 GiB leaf，包含目前的 Kernel
+└── ...
+
+setup_vm() 建立的 1 GiB higher-half mapping 已經把 kernel stack 涵蓋進去了
+
+## Sv39 允許不同 virtual address 區域使用不同 page size
+Ex62 對 kernel 使用粗粒度的 1 GiB mapping，方便快速建立整段 linear mapping；對 user code 和 stack 使用精細的 4 KiB mapping，才能個別控制實體頁面與權限
+正式 OS 通常也會混合不同粒度
