@@ -64,6 +64,9 @@ VA 0xffffffc000000000
 VA 0xffffffc080200000
 
 ## 為什麼需要 2 種 mapping (higher-half 跟 identity)?
+Bootloader 載入 kernel 時，還沒有 vm，
+但是我們最後希望 kernel 在：VA 0xffffffc000200000 執行，所以需要一個過渡階段。
+
 啟用 MMU 的瞬間, 假設執行 setup_vm() 時，CPU 正在實體位址執行,
 目前 PC = 0x80200100, 然後執行：csrw satp, ... 開啟 MMU 了,
 但 CPU 不會自動把 PC 變成：0xffffffc080200100,
@@ -99,3 +102,21 @@ setup_vm() 建立的 1 GiB higher-half mapping 已經把 kernel stack 涵蓋進�
 ## Sv39 允許不同 virtual address 區域使用不同 page size
 Ex62 對 kernel 使用粗粒度的 1 GiB mapping，方便快速建立整段 linear mapping；對 user code 和 stack 使用精細的 4 KiB mapping，才能個別控制實體頁面與權限
 正式 OS 通常也會混合不同粒度
+
+## Basic EX1
+RISC-V Sv39 把 virtual address 分成：
+63                      39 38       30 29       21 20       12 11       0
++-------------------------+-----------+-----------+-----------+----------+
+| sign extension          |  VPN[2]   |  VPN[1]   |  VPN[0]   | offset   |
++-------------------------+-----------+-----------+-----------+----------+
+                              9 bit       9 bit       9 bit      12 bit
+也就是：
+VA
+ ↓
+VPN[2] → PGD
+ ↓
+VPN[1] → PMD
+ ↓
+VPN[0] → PTE
+ ↓
+12-bit offset
