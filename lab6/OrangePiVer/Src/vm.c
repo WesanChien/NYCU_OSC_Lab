@@ -1,4 +1,6 @@
 #include "vm.h"
+#include "mm.h"
+#include "uart.h"
 
 #define EARLY_MAP_GIB 10
 
@@ -205,4 +207,188 @@ void drop_identity_map(void) {
         :
         : "memory"
     );
+}
+
+unsigned long *vm_create_user_pgd(void) {
+    /*
+     * alloc_pages() 現在回傳的是
+     * kernel higher-half VA。
+     */
+    unsigned long *pgd = (unsigned long *)alloc_pages(0);
+
+    if (!pgd) return 0;
+
+    clear_table(pgd);
+
+    /*
+     * Sv39:
+     *
+     * PGD[0..255]   → lower half / user space
+     * PGD[256..511] → upper half / kernel space
+     *
+     * User mappings 要保持獨立，
+     * 所以 low half 目前全部維持 0。
+     *
+     * Kernel mapping 則直接共享目前 kernel PGD entry。
+     */
+    for (unsigned long i = 256; i < SV39_PT_ENTRIES; i++) {
+        pgd[i] = early_pgd[i];
+    }
+
+    return pgd;
+}
+
+static unsigned long *walk_create(unsigned long *pgd, unsigned long va)
+{
+    unsigned long vpn2 = (va >> 30) & 0x1ffUL;
+    unsigned long vpn1 = (va >> 21) & 0x1ffUL;
+    unsigned long vpn0 = (va >> 12) & 0x1ffUL;
+
+    unsigned long *pmd;
+    unsigned long *pte;
+
+    /*
+     * PGD -> PMD
+     */
+    if (!(pgd[vpn2] & PTE_V)) { // 這個 user VA 所需的 PMD 還不存在
+
+        pmd = (unsigned long *)alloc_pages(0);
+
+        if (!pmd) return 0;
+
+        clear_table(pmd);
+
+        unsigned long pmd_pa = virt_to_phys_addr((unsigned long)pmd);
+
+        pgd[vpn2] = PA_TO_PTE(pmd_pa) | PTE_V;
+    } else {
+        /*
+         * 這裡預期是 non-leaf entry。
+         */
+        if (pgd[vpn2] &
+            (PTE_R | PTE_W | PTE_X))
+            return 0;
+
+        unsigned long pmd_pa =
+            PTE_TO_PA(pgd[vpn2]);
+
+        pmd = (unsigned long *)phys_to_virt_addr(pmd_pa);
+    }
+
+    /*
+     * PMD -> PTE table
+     */
+    if (!(pmd[vpn1] & PTE_V)) {
+
+        pte = (unsigned long *)alloc_pages(0);
+
+        if (!pte) return 0;
+
+        clear_table(pte);
+
+        unsigned long pte_pa = virt_to_phys_addr((unsigned long)pte);
+
+        pmd[vpn1] = PA_TO_PTE(pte_pa) | PTE_V;
+    } else {
+        if (pmd[vpn1] & (PTE_R | PTE_W | PTE_X))
+            return 0;
+
+        unsigned long pte_pa = PTE_TO_PA(pmd[vpn1]);
+
+        pte = (unsigned long *)phys_to_virt_addr(pte_pa);
+    }
+    return &pte[vpn0];
+}
+
+int map_pages_to(unsigned long *pgd, unsigned long va, unsigned long size, unsigned long pa, unsigned long prot){
+    if (!pgd || size == 0)
+        return -1;
+
+    /*
+     * 使用 4KB pages。
+     */
+    unsigned long pages = (size + PAGE_SIZE - 1) /PAGE_SIZE;
+
+    for (unsigned long i = 0; i < pages; i++) {
+        unsigned long cur_va = va + i * PAGE_SIZE;
+        unsigned long cur_pa = pa + i * PAGE_SIZE;
+        unsigned long *entry = walk_create(pgd, cur_va);
+
+        if (!entry)
+            return -1;
+
+        /*
+         * 不希望意外覆蓋既有 mapping。
+         */
+        if (*entry & PTE_V)
+            return -1;
+
+        *entry = PA_TO_PTE(cur_pa) | prot | PTE_V;
+    }
+
+    return 0;
+}
+
+void vm_user_mapping_test(void)
+{
+    uart_puts(
+        "[VM] User mapping test start\n"
+    );
+
+    unsigned long *pgd =
+        vm_create_user_pgd();
+
+    if (!pgd) {
+        uart_puts(
+            "[VM] PGD allocation failed\n"
+        );
+        return;
+    }
+
+    void *page =
+        alloc_pages(0);
+
+    if (!page) {
+        uart_puts(
+            "[VM] User page allocation failed\n"
+        );
+        return;
+    }
+
+    unsigned long page_pa =
+        virt_to_phys_addr(
+            (unsigned long)page
+        );
+
+    uart_puts("[VM] User PGD VA: ");
+    uart_hex((unsigned long)pgd);
+    uart_puts("\n");
+
+    uart_puts("[VM] Page VA: ");
+    uart_hex((unsigned long)page);
+    uart_puts("\n");
+
+    uart_puts("[VM] Page PA: ");
+    uart_hex(page_pa);
+    uart_puts("\n");
+
+    if (map_pages_to(
+            pgd,
+            0x0,
+            PAGE_SIZE,
+            page_pa,
+            PTE_U |
+            PTE_R |
+            PTE_W |
+            PTE_A |
+            PTE_D) == 0) {
+
+        uart_puts(
+            "[VM] map_pages_to success\n"
+        );
+    } else {
+        uart_puts(
+            "[VM] map_pages_to failed\n"
+        );
+    }
 }

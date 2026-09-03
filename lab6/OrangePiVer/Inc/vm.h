@@ -46,16 +46,22 @@
 #define MMIO_PAGE_FLAGS (PTE_V | PTE_R | PTE_W | PTE_G | PTE_A | PTE_D)
 
 /*
+ * User page flags
+ */
+#define USER_PAGE_BASE_FLAGS (PTE_V | PTE_U | PTE_A | PTE_D)
+
+#define USER_CODE_FLAGS (USER_PAGE_BASE_FLAGS | PTE_R | PTE_X)
+
+#define USER_STACK_FLAGS (USER_PAGE_BASE_FLAGS | PTE_R | PTE_W)
+
+/*
  * PTE bits [53:10] 儲存 physical page number。
  */
-#define PA_TO_PTE(pa) \
-    ((((unsigned long)(pa)) >> SV39_PAGE_SHIFT) << 10)
+#define PA_TO_PTE(pa) ((((unsigned long)(pa)) >> SV39_PAGE_SHIFT) << 10)
 
-#define PTE_TO_PA(pte) \
-    ((((unsigned long)(pte)) >> 10) << SV39_PAGE_SHIFT)
+#define PTE_TO_PA(pte) ((((unsigned long)(pte)) >> 10) << SV39_PAGE_SHIFT)
 
-#define MAKE_SATP(pgd_pa) \
-    (SATP_SV39 | ((unsigned long)(pgd_pa) >> SV39_PAGE_SHIFT))
+#define MAKE_SATP(pgd_pa) (SATP_SV39 | ((unsigned long)(pgd_pa) >> SV39_PAGE_SHIFT))
 
 static inline unsigned long phys_to_virt_addr(unsigned long pa) {
     return pa + KERNEL_VA_OFFSET;
@@ -67,5 +73,17 @@ static inline unsigned long virt_to_phys_addr(unsigned long va) {
 
 void setup_vm(void);
 void drop_identity_map(void);
+
+unsigned long *vm_create_user_pgd(void);
+
+int map_pages_to(
+    unsigned long *pgd,
+    unsigned long va,
+    unsigned long size,
+    unsigned long pa,
+    unsigned long prot
+);
+
+void vm_user_mapping_test(void);
 
 #endif

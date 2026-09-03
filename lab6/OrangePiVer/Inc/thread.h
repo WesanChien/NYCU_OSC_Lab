@@ -49,6 +49,20 @@ struct task_struct {
 
     struct trap_frame trapframe; // 保存 user process 在 user-mode 的 register 狀態
 
+    /*
+     * Root page table of this process.
+     *
+     * 這是 kernel 可以 dereference 的 higher-half VA，
+     * 不是 physical address。
+     *
+     * User process:
+     *     pgd != NULL
+     *
+     * Kernel thread:
+     *     暫時 pgd == NULL
+     */
+    unsigned long *pgd;
+
     unsigned long kernel_sp; // user process trap 進 kernel 時要切到哪個 kernel stack top
     unsigned long user_stack_base;
     unsigned long user_stack_top;

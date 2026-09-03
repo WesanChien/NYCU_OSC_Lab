@@ -53,8 +53,6 @@
 
 //     thread_init();
 
-//     trap_init();
-
 //     shell_run(fdt_addr);
 // }
 #include "uart.h"
@@ -63,6 +61,10 @@
 #include "mm.h"
 #include "shell.h"
 #include "vm.h"
+#include "timer.h"
+#include "thread.h"
+#include "plic.h"
+#include "task.h"
 
 void start_kernel(unsigned long fdt_addr)
 {
@@ -131,13 +133,25 @@ void start_kernel(unsigned long fdt_addr)
         rd_end_pa
     );
 
-    uart_puts("[VM] Memory initialized\n");
+    vm_user_mapping_test();
 
-    /*
-     * 暫時不開 timer / PLIC / thread。
-     */
+    task_init();
+    timer_init();
+
+    plic_init(0); // 設 PLIC (UART0 IRQ priority / enable / threshold)
+
+    uart_enable_interrupt();
+    asm volatile(
+    "csrs sie, %0"
+    :
+    : "r"(1UL << 9)
+    );
+
+    enable_external_interrupt();
+
+    thread_init();
+
     shell_run(fdt_addr);
-    
 
     while (1) {
     }

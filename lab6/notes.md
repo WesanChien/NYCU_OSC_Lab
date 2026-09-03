@@ -120,3 +120,9 @@ VPN[1] → PMD
 VPN[0] → PTE
  ↓
 12-bit offset
+
+# Basic EX2
+Kernel VA 可以利用 fixed linear mapping 做 PA ↔ VA 算術轉換(加減固定 offset)
+User VA 必須查 process page table。
+
+user mapping 則是每個 process 自由建立的，因此同一個 User VA 可以映射到不同 PA，必須知道該 process 自己的 PGD 並查 page table 才能得知 PA

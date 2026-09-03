@@ -1,6 +1,11 @@
 #include "plic.h"
+#include "vm.h"
 
-#define PLIC_BASE              0xE0000000UL // PLIC 的 MMIO base address
+#define PLIC_BASE_PA 0xE0000000UL
+
+static unsigned long plic_base;
+
+// #define PLIC_BASE              0xE0000000UL // PLIC 的 MMIO base address
 
 #define PLIC_PRIORITY_BASE     0x000000UL
 #define PLIC_S_ENABLE_BASE     0x002080UL
@@ -23,7 +28,7 @@ static inline unsigned int read32(unsigned long addr) {
 }
 
 static inline unsigned long plic_priority_addr(unsigned int irq) {
-    return PLIC_BASE + PLIC_PRIORITY_BASE + irq * 4;
+    return plic_base + PLIC_PRIORITY_BASE + irq * 4;
 }
 
 static inline unsigned long plic_s_enable_addr(unsigned long hart_id, unsigned int irq) {
@@ -31,18 +36,20 @@ static inline unsigned long plic_s_enable_addr(unsigned long hart_id, unsigned i
      * 一個 PLIC enable register, enable word 管 32 個 IRQ。
      * UART0 IRQ = 42，所以在 word 1，bit = 42 % 32 = 10。
      */
-    return PLIC_BASE + PLIC_S_ENABLE_BASE + hart_id * 0x80UL + (irq / 32U) * 4UL;
+    return plic_base + PLIC_S_ENABLE_BASE + hart_id * 0x80UL + (irq / 32U) * 4UL;
 }
 
 static inline unsigned long plic_s_threshold_addr(unsigned long hart_id) {
-    return PLIC_BASE + PLIC_S_THRESHOLD_BASE + hart_id * 0x2000UL;
+    return plic_base + PLIC_S_THRESHOLD_BASE + hart_id * 0x2000UL;
 }
 
 static inline unsigned long plic_s_claim_addr(unsigned long hart_id) {
-    return PLIC_BASE + PLIC_S_CLAIM_BASE + hart_id * 0x2000UL;
+    return plic_base + PLIC_S_CLAIM_BASE + hart_id * 0x2000UL;
 }
 
 void plic_init(unsigned long hart_id) {
+    plic_base = phys_to_virt_addr(PLIC_BASE_PA);
+
     boot_hart_id = hart_id;
 
     /*

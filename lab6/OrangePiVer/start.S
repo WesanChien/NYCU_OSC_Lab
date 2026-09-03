@@ -60,6 +60,18 @@ bss_done:
     la   sp, __stack_top
 
     /*
+     * handle_exception 是 linker 的 higher-half symbol。
+     *
+     * 此時 la 得到：
+     *
+     *   0xffffffc00020xxxx
+     *
+     * 不需要 phys_to_virt，也不能轉成 PA。
+     */
+    la   t0, handle_exception
+    csrw stvec, t0
+
+    /*
      * 已經不再需要低位址的 temporary identity mapping。
      */
     call drop_identity_map
@@ -80,6 +92,8 @@ bss_done:
 .equ TF_SIZE, 280
 .equ SSTATUS_SPP, 0x100
 
+.align 2
+.global handle_exception
 handle_exception:
     /*
      * 判斷 trap 發生前是 U-mode 還是 S-mode。
